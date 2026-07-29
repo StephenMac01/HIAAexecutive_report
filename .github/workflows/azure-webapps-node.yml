@@ -8,8 +8,7 @@ on:
 
 env:
   AZURE_WEBAPP_NAME: hiaaexecutivereport
-  NODE_VERSION: "24.x"
-
+  NODE_VERSION: "20.x"
 
 jobs:
   build-and-deploy:
@@ -54,27 +53,6 @@ jobs:
           cp -r .next/static .next/standalone/.next/static
 
       - name: Deploy to Azure Web App
-        uses: azure/webapps-deploy@v3
-        with:
-          app-name: hiaaexecutivereport
-          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
-          package: .next/standalone
-          SHAREPOINT_TENANT_ID: gfdgdfgdfgfdgfdgdf 
-          SHAREPOINT_CLIENT_ID: fg767865jhrrthb97a5e
-          SHAREPOINT_CLIENT_SECRET: pRu8Q~wtyrty54r345636532673743874357
-          SHAREPOINT_SITE_URL: https://commissionairesns.sharepoint.com/sites/HIAAKPIs
-          SHAREPOINT_FILE_TEMPLATE: {id}.xlsx
-          REVALIDATE_SECRET: wQyTOLFgtbZCEUXWBokHKYfauxch9qdV1mA7iDMn0eS5NJjr
-
-      - name: Prepare standalone deployment
-        run: |
-          if [ -d "public" ]; then
-            cp -r public .next/standalone/public
-          fi
-          mkdir -p .next/standalone/.next
-          cp -r .next/static .next/standalone/.next/static
-
-      - name: hiaaexecutivereport
         uses: azure/webapps-deploy@v3
         with:
           app-name: hiaaexecutivereport
