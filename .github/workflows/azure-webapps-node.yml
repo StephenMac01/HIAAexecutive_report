@@ -35,9 +35,30 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-            - name: Build Next.js application
+      - name: Build Next.js application
         run: pnpm build
         env:
+          SHAREPOINT_TENANT_ID: ${{ secrets.SHAREPOINT_TENANT_ID }}
+          SHAREPOINT_CLIENT_ID: ${{ secrets.SHAREPOINT_CLIENT_ID }}
+          SHAREPOINT_CLIENT_SECRET: ${{ secrets.SHAREPOINT_CLIENT_SECRET }}
+          SHAREPOINT_SITE_URL: ${{ secrets.SHAREPOINT_SITE_URL }}
+          SHAREPOINT_FILE_TEMPLATE: ${{ secrets.SHAREPOINT_FILE_TEMPLATE }}
+          REVALIDATE_SECRET: ${{ secrets.REVALIDATE_SECRET }}
+
+      - name: Prepare standalone deployment
+        run: |
+          if [ -d "public" ]; then
+            cp -r public .next/standalone/public
+          fi
+          mkdir -p .next/standalone/.next
+          cp -r .next/static .next/standalone/.next/static
+
+      - name: Deploy to Azure Web App
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: hiaaexecutivereport
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+          package: .next/standalone
           SHAREPOINT_TENANT_ID: gfdgdfgdfgfdgfdgdf 
           SHAREPOINT_CLIENT_ID: fg767865jhrrthb97a5e
           SHAREPOINT_CLIENT_SECRET: pRu8Q~wtyrty54r345636532673743874357
