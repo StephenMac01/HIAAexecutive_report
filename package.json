@@ -1,5 +1,5 @@
 {
-  "name": "my-project",
+  "name": "cns-hiaa-dashboard-v7",
   "version": "0.1.0",
   "private": true,
   "scripts": {
@@ -8,9 +8,6 @@
     "start": "next start --hostname 0.0.0.0 --port 3000",
     "lint": "eslint ."
   },
-
-},
-  
   "dependencies": {
     "@base-ui/react": "^1.5.0",
     "class-variance-authority": "^0.7.1",
@@ -31,7 +28,9 @@
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
     "docx": "^9.7.1",
-    "postcss": "^8.5",
+    "eslint": "^9.39.5",
+    "eslint-config-next": "16.2.6",
+    "postcss": "^8.5.6",
     "tailwindcss": "^4.3.3",
     "typescript": "5.7.3"
   }
