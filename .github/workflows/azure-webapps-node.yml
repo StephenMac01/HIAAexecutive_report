@@ -7,12 +7,9 @@ on:
   workflow_dispatch:
 
 env:
-  AZURE_WEBAPP_NAME: HIAAExecutiveReport
+  AZURE_WEBAPP_NAME: hiaaexecutivereport
   NODE_VERSION: "24.x"
 
-permissions:
-  contents: read
-  id-token: write
 
 jobs:
   build-and-deploy:
@@ -25,7 +22,7 @@ jobs:
       - name: Install pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 11.16.0
+          version: 10
           run_install: false
 
       - name: Set up Node.js
@@ -38,19 +35,27 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build Next.js application
+            - name: Build Next.js application
         run: pnpm build
+        env:
+          SHAREPOINT_TENANT_ID: gfdgdfgdfgfdgfdgdf 
+          SHAREPOINT_CLIENT_ID: fg767865jhrrthb97a5e
+          SHAREPOINT_CLIENT_SECRET: pRu8Q~wtyrty54r345636532673743874357
+          SHAREPOINT_SITE_URL: https://commissionairesns.sharepoint.com/sites/HIAAKPIs
+          SHAREPOINT_FILE_TEMPLATE: {id}.xlsx
+          REVALIDATE_SECRET: wQyTOLFgtbZCEUXWBokHKYfauxch9qdV1mA7iDMn0eS5NJjr
 
-      name: Login to Azure
-        uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_389662A33E034CDABA17BD3C483F3B86 }}
-          tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_C5CCDBD5D7094BC3B113EBA2212CF6A0 }}
-          subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_FEA81C513EE2440B98D8A827D80BA8AF }}
+      - name: Prepare standalone deployment
+        run: |
+          if [ -d "public" ]; then
+            cp -r public .next/standalone/public
+          fi
+          mkdir -p .next/standalone/.next
+          cp -r .next/static .next/standalone/.next/static
 
-      - name: Deploy to Azure Web App
+      - name: hiaaexecutivereport
         uses: azure/webapps-deploy@v3
         with:
-          app-name: HIAAExecutiveReport
-          slot-name: Production
-          package: .
+          app-name: hiaaexecutivereport
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+          package: .next/standalone
