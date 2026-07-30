@@ -57,19 +57,30 @@ jobs:
             cp -a public deploy/public
           fi
 
+          rm -rf deploy/node_modules/@swc/helpers
           mkdir -p deploy/node_modules/@swc
           cp -a node_modules/@swc/helpers deploy/node_modules/@swc/helpers
 
-          echo "Verifying deployment package"
-
+          echo "Verifying standalone server"
           test -f deploy/server.js
-          test -f deploy/node_modules/@swc/helpers/package.json
 
-          echo "Deployment package contents:"
+          echo "Verifying SWC helper package"
+          test -f deploy/node_modules/@swc/helpers/package.json
+          test -f deploy/node_modules/@swc/helpers/esm/_interop_require_default.js
+
+          echo "Checking exact SWC helper file"
+          ls -la deploy/node_modules/@swc/helpers/esm/_interop_require_default.js
+
+          echo "Deployment package contents"
           ls -la deploy
 
-          echo "SWC helper contents:"
-          ls -la deploy/node_modules/@swc/helpers
+      - name: Ensure Oryx files are not included
+        run: |
+          rm -f deploy/oryx-manifest.toml
+          rm -f deploy/node_modules.tar.gz
+
+          test ! -f deploy/oryx-manifest.toml
+          test ! -f deploy/node_modules.tar.gz
 
       - name: Upload deployment artifact
         uses: actions/upload-artifact@v4
