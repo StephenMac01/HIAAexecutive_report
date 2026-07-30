@@ -1,170 +1,286 @@
-import "server-only"
+import "server-only";
 
 /**
- * Microsoft Graph app-only (client credentials) access for reading KPI
- * workbooks out of a SharePoint document library.
+ * Microsoft Graph app-only access for reading KPI Excel workbooks from
+ * a SharePoint document library.
  *
- * All configuration comes from environment variables so the same code runs in
- * preview (no creds → callers fall back to local files) and production:
+ * Required environment variables:
  *
- *   SHAREPOINT_TENANT_ID      Directory (tenant) ID of the Entra app registration
- *   SHAREPOINT_CLIENT_ID      Application (client) ID
- *   SHAREPOINT_CLIENT_SECRET  Client secret value
- *   SHAREPOINT_SITE_URL       e.g. https://commissionairesns.sharepoint.com/sites/HIAAKPIs
- *   SHAREPOINT_BASE_PATH      optional sub-folder inside the document library
- *                             (e.g. "General" for a Teams channel folder)
- *   SHAREPOINT_FILE_TEMPLATE  optional file-name layout, default "{id}.xlsx"
- *                             (see lib/kpi-data/workbook-source.ts)
+ * SHAREPOINT_TENANT_ID
+ * SHAREPOINT_CLIENT_ID
+ * SHAREPOINT_CLIENT_SECRET
+ * SHAREPOINT_SITE_URL
  *
- * NOTE: use the plain site URL, NOT a browser "Copy link" URL such as
- *   .../:x:/r/sites/HIAAKPIs/_layouts/15/Doc.aspx?sourcedoc={GUID}&file=kpi-01.xlsx
- * The Graph client resolves files by site + folder path, so the share-link
- * GUID is neither needed nor used.
+ * Optional:
+ *
+ * SHAREPOINT_BASE_PATH
+ *
+ * Example site URL:
+ *
+ * https://commissionairesns.sharepoint.com/sites/HIAAKPIs
+ *
+ * Use the plain SharePoint site URL, not a browser "Copy link" URL.
  */
 
-const GRAPH_ROOT = "https://graph.microsoft.com/v1.0"
+const GRAPH_ROOT = "https://graph.microsoft.com/v1.0";
 
 export type SharePointConfig = {
-  tenantId: string
-  clientId: string
-  clientSecret: string
-  siteUrl: string
-  basePath: string
-}
+  tenantId: string;
+  clientId: string;
+  clientSecret: string;
+  siteUrl: string;
+  basePath: string;
+};
 
 /**
- * Read + validate SharePoint configuration. Returns `null` when any required
- * variable is missing, which is the signal for callers to use local fallback
- * data instead of failing.
+ * Read and validate the SharePoint environment variables.
  */
 export function getSharePointConfig(): SharePointConfig | null {
-  const tenantId = process.env.SHAREPOINT_TENANT_ID
-  const clientId = process.env.SHAREPOINT_CLIENT_ID
-  const clientSecret = process.env.SHAREPOINT_CLIENT_SECRET
-  const siteUrl = process.env.SHAREPOINT_SITE_URL
+  const tenantId = process.env.SHAREPOINT_TENANT_ID?.trim();
+  const clientId = process.env.SHAREPOINT_CLIENT_ID?.trim();
+  const clientSecret = process.env.SHAREPOINT_CLIENT_SECRET?.trim();
+  const siteUrl = process.env.SHAREPOINT_SITE_URL?.trim();
 
-  if (!tenantId || !clientId || !clientSecret || !siteUrl) return null
+  if (!tenantId || !clientId || !clientSecret || !siteUrl) {
+    return null;
+  }
 
   return {
     tenantId,
     clientId,
     clientSecret,
     siteUrl,
-    // Normalize the optional base path to "" or "trimmed/segments".
-    basePath: (process.env.SHAREPOINT_BASE_PATH ?? "").replace(/^\/+|\/+$/g, ""),
-  }
+    basePath: (process.env.SHAREPOINT_BASE_PATH ?? "")
+      .trim()
+      .replace(/^\/+|\/+$/g, ""),
+  };
 }
 
-/** Whether a full SharePoint configuration is present. */
+/**
+ * Confirm that all required SharePoint settings are available.
+ */
 export function isSharePointConfigured(): boolean {
-  return getSharePointConfig() !== null
+  return getSharePointConfig() !== null;
 }
 
-// --- Token cache -----------------------------------------------------------
+// -----------------------------------------------------------------------------
+// Microsoft Graph access-token cache
+// -----------------------------------------------------------------------------
 
-let cachedToken: { value: string; expiresAt: number } | null = null
+let cachedToken: {
+  value: string;
+  expiresAt: number;
+} | null = null;
 
-/** Fetch (and cache in-memory) an app-only Graph access token. */
+/**
+ * Retrieve an app-only Microsoft Graph token.
+ *
+ * The token is cached in memory until 60 seconds before its expiry.
+ */
 async function getAccessToken(config: SharePointConfig): Promise<string> {
-  // Reuse the cached token until 60s before expiry.
   if (cachedToken && Date.now() < cachedToken.expiresAt - 60_000) {
-    return cachedToken.value
+    return cachedToken.value;
   }
+
+  const tokenUrl =
+    `https://login.microsoftonline.com/` +
+    `${config.tenantId}/oauth2/v2.0/token`;
 
   const body = new URLSearchParams({
     client_id: config.clientId,
     client_secret: config.clientSecret,
     scope: "https://graph.microsoft.com/.default",
     grant_type: "client_credentials",
-  })
+  });
 
-  const res = await fetch(`https://login.microsoftonline.com/${config.tenantId}/oauth2/v2.0/token`, {
+  const response = await fetch(tokenUrl, {
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      Accept: "application/json",
+    },
     body,
-    // Auth tokens must never be cached by Next's fetch cache.
     cache: "no-store",
-  })
+  });
 
-  if (!res.ok) {
-    const detail = await res.text().catch(() => "")
-    throw new Error(`SharePoint token request failed (${res.status}): ${detail.slice(0, 300)}`)
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+
+    throw new Error(
+      `SharePoint token request failed ` +
+        `(${response.status} ${response.statusText}): ` +
+        `${detail.slice(0, 300)}`,
+    );
   }
 
-  const json = (await res.json()) as { access_token: string; expires_in: number }
+  const result = (await response.json()) as {
+    access_token?: string;
+    expires_in?: number;
+  };
+
+  if (!result.access_token) {
+    throw new Error("Microsoft token response did not include an access token");
+  }
+
   cachedToken = {
-    value: json.access_token,
-    expiresAt: Date.now() + json.expires_in * 1000,
-  }
-  return cachedToken.value
+    value: result.access_token,
+    expiresAt: Date.now() + (result.expires_in ?? 3600) * 1000,
+  };
+
+  return cachedToken.value;
 }
 
-// --- Site resolution -------------------------------------------------------
+// -----------------------------------------------------------------------------
+// SharePoint site resolution
+// -----------------------------------------------------------------------------
 
-let cachedSiteId: string | null = null
+let cachedSiteId: string | null = null;
 
 /**
- * Resolve the Graph `siteId` for the configured `SHAREPOINT_SITE_URL`.
- * Cached in-memory since the site id is stable for the app's lifetime.
+ * Resolve the configured SharePoint site URL into a Microsoft Graph site ID.
  */
-async function getSiteId(config: SharePointConfig, token: string): Promise<string> {
-  if (cachedSiteId) return cachedSiteId
-
-  const url = new URL(config.siteUrl)
-  const hostname = url.hostname
-  // Path like "/sites/HIAA-KPIs" → "sites/HIAA-KPIs".
-  const sitePath = url.pathname.replace(/^\/+|\/+$/g, "")
-
-  const res = await fetch(`${GRAPH_ROOT}/sites/${hostname}:/${sitePath}`, {
-    headers: { Authorization: `Bearer ${token}` },
-    cache: "no-store",
-  })
-
-  if (!res.ok) {
-    const detail = await res.text().catch(() => "")
-    throw new Error(`SharePoint site lookup failed (${res.status}): ${detail.slice(0, 300)}`)
+async function getSiteId(
+  config: SharePointConfig,
+  token: string,
+): Promise<string> {
+  if (cachedSiteId) {
+    return cachedSiteId;
   }
 
-  const json = (await res.json()) as { id: string }
-  cachedSiteId = json.id
-  return json.id
+  let parsedSiteUrl: URL;
+
+  try {
+    parsedSiteUrl = new URL(config.siteUrl);
+  } catch {
+    throw new Error(`Invalid SHAREPOINT_SITE_URL: ${config.siteUrl}`);
+  }
+
+  const hostname = parsedSiteUrl.hostname;
+  const sitePath = parsedSiteUrl.pathname.replace(/^\/+|\/+$/g, "");
+
+  if (!hostname || !sitePath) {
+    throw new Error(`Invalid SHAREPOINT_SITE_URL: ${config.siteUrl}`);
+  }
+
+  const siteLookupUrl = `${GRAPH_ROOT}/sites/${hostname}:/${sitePath}`;
+
+  const response = await fetch(siteLookupUrl, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/json",
+    },
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+
+    throw new Error(
+      `SharePoint site lookup failed for "${config.siteUrl}" ` +
+        `(${response.status} ${response.statusText}): ` +
+        `${detail.slice(0, 300)}`,
+    );
+  }
+
+  const result = (await response.json()) as {
+    id?: string;
+  };
+
+  if (!result.id) {
+    throw new Error(
+      `SharePoint site lookup returned no site ID for ` + `"${config.siteUrl}"`,
+    );
+  }
+
+  cachedSiteId = result.id;
+
+  return cachedSiteId;
 }
 
+// -----------------------------------------------------------------------------
+// Workbook download
+// -----------------------------------------------------------------------------
+
 /**
- * Download the raw bytes of a file from the site's default document library,
- * given a drive-relative path (e.g. "kpi-01/kpi-01.xlsx").
+ * Download a file from the SharePoint site's default document library.
  *
- * `revalidateTag` lets the ISR layer cache the download for a window and be
- * force-invalidated by the webhook. Set `cacheSeconds` to 0 for no caching
- * (used by the live download endpoint).
+ * Example drive paths:
+ *
+ * kpi-01.xlsx
+ * kpi-01/kpi-01.xlsx
+ * KPI Dashboard Data/kpi-01/kpi-01.xlsx
+ *
+ * All requests use cache: "no-store" because the consuming dashboard pages
+ * are rendered dynamically from the current SharePoint workbook.
  */
 export async function downloadSiteFile(
   drivePath: string,
-  { cacheSeconds, revalidateTag }: { cacheSeconds: number; revalidateTag?: string },
 ): Promise<ArrayBuffer> {
-  const config = getSharePointConfig()
-  if (!config) throw new Error("SharePoint is not configured")
+  const config = getSharePointConfig();
 
-  const token = await getAccessToken(config)
-  const siteId = await getSiteId(config, token)
-
-  const fullPath = [config.basePath, drivePath].filter(Boolean).join("/")
-  const encodedPath = fullPath
-    .split("/")
-    .map((seg) => encodeURIComponent(seg))
-    .join("/")
-
-  const res = await fetch(`${GRAPH_ROOT}/sites/${siteId}/drive/root:/${encodedPath}:/content`, {
-    headers: { Authorization: `Bearer ${token}` },
-    ...(cacheSeconds > 0
-      ? { next: { revalidate: cacheSeconds, tags: revalidateTag ? [revalidateTag] : undefined } }
-      : { cache: "no-store" }),
-  })
-
-  if (!res.ok) {
-    const detail = await res.text().catch(() => "")
-    throw new Error(`SharePoint file download failed for "${fullPath}" (${res.status}): ${detail.slice(0, 300)}`)
+  if (!config) {
+    throw new Error("SharePoint is not configured");
   }
 
-  return res.arrayBuffer()
+  const normalizedDrivePath = drivePath.trim().replace(/^\/+|\/+$/g, "");
+
+  if (!normalizedDrivePath) {
+    throw new Error("A SharePoint drive path was not provided");
+  }
+
+  const token = await getAccessToken(config);
+  const siteId = await getSiteId(config, token);
+
+  const fullPath = [config.basePath, normalizedDrivePath]
+    .filter(Boolean)
+    .join("/");
+
+  const encodedPath = fullPath
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+
+  const downloadUrl =
+    `${GRAPH_ROOT}/sites/${siteId}/drive/root:` + `/${encodedPath}:/content`;
+
+  console.log(`[CNS HIAA] Loading SharePoint workbook: ${fullPath}`);
+
+  const response = await fetch(downloadUrl, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept:
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    },
+    cache: "no-store",
+    redirect: "follow",
+  });
+
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+
+    throw new Error(
+      `SharePoint file download failed for "${fullPath}" ` +
+        `(${response.status} ${response.statusText}): ` +
+        `${detail.slice(0, 300)}`,
+    );
+  }
+
+  const contentType = response.headers.get("content-type") ?? "";
+
+  if (
+    contentType.includes("text/html") ||
+    contentType.includes("application/json")
+  ) {
+    const detail = await response.text().catch(() => "");
+
+    throw new Error(
+      `Unexpected SharePoint response for "${fullPath}". ` +
+        `Content-Type: ${contentType}. ` +
+        `Response: ${detail.slice(0, 300)}`,
+    );
+  }
+
+  return response.arrayBuffer();
 }
