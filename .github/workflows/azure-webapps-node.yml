@@ -47,7 +47,6 @@ jobs:
       - name: Prepare standalone application
         run: |
           rm -rf deploy node-app.zip
-
           mkdir -p deploy
 
           cp -a .next/standalone/. deploy/
@@ -62,19 +61,15 @@ jobs:
           echo "Checking standalone package"
 
           test -f deploy/server.js
-          test -d deploy/node_modules
           test -f deploy/node_modules/next/package.json
-
-          echo "Next.js runtime found:"
-          ls -la deploy/node_modules/next/package.json
-
-          echo "Creating deployment ZIP"
+          test -f deploy/node_modules/react/package.json
+          test -f deploy/node_modules/react-dom/package.json
 
           cd deploy
           zip -r ../node-app.zip .
           cd ..
 
-          echo "Verifying ZIP"
+          echo "Checking ZIP package"
 
           unzip -l node-app.zip | grep "server.js"
           unzip -l node-app.zip | grep "node_modules/next/package.json"
