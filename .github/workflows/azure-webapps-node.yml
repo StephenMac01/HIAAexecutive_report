@@ -40,19 +40,48 @@ jobs:
 
       - name: Build Next.js application
         run: pnpm build
+        env:
+          SHAREPOINT_TENANT_ID: ${{ secrets.SHAREPOINT_TENANT_ID }}
+          SHAREPOINT_CLIENT_ID: ${{ secrets.SHAREPOINT_CLIENT_ID }}
+          SHAREPOINT_CLIENT_SECRET: ${{ secrets.SHAREPOINT_CLIENT_SECRET }}
+          SHAREPOINT_SITE_URL: ${{ secrets.SHAREPOINT_SITE_URL }}
+          SHAREPOINT_BASE_PATH: ${{ secrets.SHAREPOINT_BASE_PATH }}
+          SHAREPOINT_FILE_TEMPLATE: ${{ secrets.SHAREPOINT_FILE_TEMPLATE }}
+          KPI_CACHE_SECONDS: ${{ secrets.KPI_CACHE_SECONDS }}
+          REVALIDATE_SECRET: ${{ secrets.REVALIDATE_SECRET }}
 
-      - name: Prepare standalone deployment
+      - name: Prepare deployment directory
         run: |
+          rm -rf deploy
+          mkdir -p deploy
+
+          cp -a .next/standalone/. deploy/
+
+          mkdir -p deploy/.next
+          cp -a .next/static deploy/.next/static
+
           if [ -d "public" ]; then
-            cp -r public .next/standalone/public
+            cp -a public deploy/public
           fi
 
-          mkdir -p .next/standalone/.next
-          cp -r .next/static .next/standalone/.next/static
+          test -f deploy/server.js
+          test -f deploy/node_modules/next/package.json
+
+          echo "Deployment package contents:"
+          ls -la deploy
+          ls -la deploy/node_modules/next | head
+
+      - name: Create clean ZIP package
+        run: |
+          cd deploy
+          zip -r ../hiaaexecutivereport.zip .
 
       - name: Deploy to Azure Web App
+        id: deploy-to-webapp
         uses: azure/webapps-deploy@v3
         with:
           app-name: ${{ env.AZURE_WEBAPP_NAME }}
           publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
-          package: .next/standalone
+          package: hiaaexecutivereport.zip
+          clean: true
+          restart: true
