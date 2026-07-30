@@ -43,28 +43,35 @@ jobs:
 
       - name: Build Next.js application
         run: pnpm build
+
       - name: Prepare standalone application
         run: |
+          set -euxo pipefail
+
           rm -rf deploy node-app.zip
           mkdir -p deploy
 
+          echo "Copying Next.js standalone output"
           cp -a .next/standalone/. deploy/
 
+          echo "Copying static assets"
           mkdir -p deploy/.next
           cp -a .next/static deploy/.next/static
 
           if [ -d public ]; then
+            echo "Copying public assets"
             cp -a public deploy/public
           fi
 
-          echo "Locating SWC helpers"
-
+          echo "Locating complete SWC helpers package"
           SWC_HELPER_FILE="$(node -p "require.resolve('@swc/helpers/esm/_interop_require_default.js')")"
           SWC_HELPERS_DIR="$(dirname "$(dirname "$SWC_HELPER_FILE")")"
 
           echo "SWC helper file: $SWC_HELPER_FILE"
           echo "SWC helpers directory: $SWC_HELPERS_DIR"
 
+          echo "Replacing incomplete SWC helpers directory"
+          rm -rf deploy/node_modules/@swc/helpers
           mkdir -p deploy/node_modules/@swc
           cp -aL "$SWC_HELPERS_DIR" deploy/node_modules/@swc/helpers
 
@@ -86,12 +93,20 @@ jobs:
             fi
           done
 
-          cd deploy
-          zip -r ../node-app.zip .
-          cd ..
+          echo "Testing packaged server dependency resolution"
+          (
+            cd deploy
+            node -e "require.resolve('next')"
+            node -e "require.resolve('@swc/helpers/esm/_interop_require_default.js')"
+          )
+
+          echo "Creating deployment ZIP"
+          (
+            cd deploy
+            zip -qr ../node-app.zip .
+          )
 
           echo "Checking ZIP package"
-
           unzip -l node-app.zip | grep "server.js"
           unzip -l node-app.zip | grep "node_modules/next/package.json"
           unzip -l node-app.zip | grep "node_modules/@swc/helpers/esm/_interop_require_default.js"
@@ -101,6 +116,7 @@ jobs:
         with:
           name: node-app
           path: node-app.zip
+          if-no-files-found: error
 
   deploy:
     runs-on: ubuntu-latest
@@ -115,6 +131,13 @@ jobs:
         with:
           name: node-app
           path: artifact
+
+      - name: Verify downloaded artifact
+        run: |
+          test -f artifact/node-app.zip
+          unzip -l artifact/node-app.zip | grep "server.js"
+          unzip -l artifact/node-app.zip | grep "node_modules/next/package.json"
+          unzip -l artifact/node-app.zip | grep "node_modules/@swc/helpers/esm/_interop_require_default.js"
 
       - name: Deploy to Azure Web App
         uses: azure/webapps-deploy@v3
