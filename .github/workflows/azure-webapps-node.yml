@@ -1,3 +1,64 @@
+name: Build and deploy HIAA Executive Report
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  AZURE_WEBAPP_NAME: hiaaexecutivereport
+  NODE_VERSION: "24.x"
+  PNPM_VERSION: "11.16.0"
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build Next.js application
+        run: pnpm build
+        env:
+          SHAREPOINT_TENANT_ID: ${{ secrets.SHAREPOINT_TENANT_ID }}
+          SHAREPOINT_CLIENT_ID: ${{ secrets.SHAREPOINT_CLIENT_ID }}
+          SHAREPOINT_CLIENT_SECRET: ${{ secrets.SHAREPOINT_CLIENT_SECRET }}
+          SHAREPOINT_SITE_URL: ${{ secrets.SHAREPOINT_SITE_URL }}
+          SHAREPOINT_BASE_PATH: ${{ secrets.SHAREPOINT_BASE_PATH }}
+          SHAREPOINT_FILE_TEMPLATE: ${{ secrets.SHAREPOINT_FILE_TEMPLATE }}
+          KPI_CACHE_SECONDS: ${{ secrets.KPI_CACHE_SECONDS }}
+          REVALIDATE_SECRET: ${{ secrets.REVALIDATE_SECRET }}
+
+      - name: Verify standalone output
+        run: |
+          test -d .next/standalone
+          test -f .next/standalone/server.js
+          test -f .next/standalone/node_modules/next/package.json
+
+          echo "Standalone output verified."
+          ls -la .next/standalone
+
       - name: Prepare standalone deployment
         run: |
           rm -rf deploy hiaaexecutivereport.zip
