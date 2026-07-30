@@ -44,9 +44,10 @@ jobs:
       - name: Build Next.js application
         run: pnpm build
 
-      - name: Prepare standalone deployment package
+      - name: Prepare standalone application
         run: |
-          rm -rf deploy
+          rm -rf deploy node-app.zip
+
           mkdir -p deploy
 
           cp -a .next/standalone/. deploy/
@@ -58,25 +59,23 @@ jobs:
             cp -a public deploy/public
           fi
 
-          echo "Verifying standalone deployment package"
+          echo "Checking standalone package"
 
           test -f deploy/server.js
           test -d deploy/node_modules
           test -f deploy/node_modules/next/package.json
 
-          echo "Next.js package:"
-          ls -la deploy/node_modules/next
+          echo "Next.js runtime found:"
+          ls -la deploy/node_modules/next/package.json
 
-          echo "Deployment root:"
-          ls -la deploy
+          echo "Creating deployment ZIP"
 
-      - name: Create deployment ZIP
-        run: |
           cd deploy
           zip -r ../node-app.zip .
           cd ..
 
-          echo "Verifying ZIP contents"
+          echo "Verifying ZIP"
+
           unzip -l node-app.zip | grep "server.js"
           unzip -l node-app.zip | grep "node_modules/next/package.json"
 
@@ -101,7 +100,6 @@ jobs:
           path: artifact
 
       - name: Deploy to Azure Web App
-        id: deploy-to-webapp
         uses: azure/webapps-deploy@v3
         with:
           app-name: ${{ env.AZURE_WEBAPP_NAME }}
