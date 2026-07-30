@@ -1,7 +1,10 @@
-import "server-only"
-import { readFile } from "node:fs/promises"
-import { join } from "node:path"
-import { downloadSiteFile, isSharePointConfigured } from "@/lib/sharepoint/graph-client"
+import "server-only";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+import {
+  downloadSiteFile,
+  isSharePointConfigured,
+} from "@/lib/sharepoint/graph-client";
 
 /**
  * Single source of truth for the raw bytes of a KPI workbook.
@@ -17,7 +20,7 @@ import { downloadSiteFile, isSharePointConfigured } from "@/lib/sharepoint/graph
 
 /** Cache tag for a KPI's workbook, used by the revalidate webhook. */
 export function kpiCacheTag(kpiId: string): string {
-  return `kpi:${kpiId}`
+  return `kpi:${kpiId}`;
 }
 
 /**
@@ -30,8 +33,8 @@ export function kpiCacheTag(kpiId: string): string {
  * Falls back to 300s when unset or invalid.
  */
 function defaultCacheSeconds(): number {
-  const raw = Number(process.env.KPI_CACHE_SECONDS)
-  return Number.isFinite(raw) && raw >= 0 ? raw : 300
+  const raw = Number(process.env.KPI_CACHE_SECONDS);
+  return Number.isFinite(raw) && raw >= 0 ? raw : 300;
 }
 
 /**
@@ -47,13 +50,13 @@ function defaultCacheSeconds(): number {
  * Any `SHAREPOINT_BASE_PATH` is prepended to this by `downloadSiteFile`.
  */
 function kpiDrivePath(kpiId: string): string {
-  const template = process.env.SHAREPOINT_FILE_TEMPLATE?.trim() || "{id}.xlsx"
-  return template.replace(/\{id\}/g, kpiId).replace(/^\/+/, "")
+  const template = process.env.SHAREPOINT_FILE_TEMPLATE?.trim() || "{id}.xlsx";
+  return template.replace(/\{id\}/g, kpiId).replace(/^\/+/, "");
 }
 
 /** Absolute path to the bundled local fallback workbook. */
 function localWorkbookPath(kpiId: string): string {
-  return join(process.cwd(), "data", kpiId, `${kpiId}.xlsx`)
+  return join(process.cwd(), "data", kpiId, `${kpiId}.xlsx`);
 }
 
 /**
@@ -72,24 +75,31 @@ export async function getKpiWorkbookBuffer(
       return await downloadSiteFile(kpiDrivePath(kpiId), {
         cacheSeconds,
         revalidateTag: kpiCacheTag(kpiId),
-      })
+      });
     } catch (error) {
-      console.log(
-        `[v0] SharePoint fetch failed for ${kpiId}, falling back to local file:`,
+      console.error(
+        `[CNS HIAA] SharePoint fetch failed for ${kpiId}:`,
         error instanceof Error ? error.message : error,
-      )
+      );
+
+      throw error;
     }
   }
 
-  const buf = await readFile(localWorkbookPath(kpiId))
+  const buf = await readFile(localWorkbookPath(kpiId));
   // Return a standalone ArrayBuffer slice (Node Buffer views a shared pool).
-  return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer
+  return buf.buffer.slice(
+    buf.byteOffset,
+    buf.byteOffset + buf.byteLength,
+  ) as ArrayBuffer;
 }
 
 /**
  * Fetch a KPI workbook's bytes for a live download (never cached), so the file
  * a user downloads always matches SharePoint exactly.
  */
-export async function getKpiWorkbookForDownload(kpiId: string): Promise<ArrayBuffer> {
-  return getKpiWorkbookBuffer(kpiId, { cacheSeconds: 0 })
+export async function getKpiWorkbookForDownload(
+  kpiId: string,
+): Promise<ArrayBuffer> {
+  return getKpiWorkbookBuffer(kpiId, { cacheSeconds: 0 });
 }
