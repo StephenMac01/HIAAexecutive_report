@@ -43,7 +43,6 @@ jobs:
 
       - name: Build Next.js application
         run: pnpm build
-
       - name: Prepare standalone application
         run: |
           rm -rf deploy node-app.zip
@@ -58,17 +57,34 @@ jobs:
             cp -a public deploy/public
           fi
 
+          echo "Locating SWC helpers"
+
+          SWC_HELPER_FILE="$(node -p "require.resolve('@swc/helpers/esm/_interop_require_default.js')")"
+          SWC_HELPERS_DIR="$(dirname "$(dirname "$SWC_HELPER_FILE")")"
+
+          echo "SWC helper file: $SWC_HELPER_FILE"
+          echo "SWC helpers directory: $SWC_HELPERS_DIR"
+
           mkdir -p deploy/node_modules/@swc
-          cp -aL node_modules/@swc/helpers deploy/node_modules/@swc/helpers
+          cp -aL "$SWC_HELPERS_DIR" deploy/node_modules/@swc/helpers
 
           echo "Checking standalone package"
 
-          test -f deploy/server.js
-          test -f deploy/node_modules/next/package.json
-          test -f deploy/node_modules/react/package.json
-          test -f deploy/node_modules/react-dom/package.json
-          test -f deploy/node_modules/@swc/helpers/package.json
-          test -f deploy/node_modules/@swc/helpers/esm/_interop_require_default.js
+          for file in \
+            deploy/server.js \
+            deploy/node_modules/next/package.json \
+            deploy/node_modules/react/package.json \
+            deploy/node_modules/react-dom/package.json \
+            deploy/node_modules/@swc/helpers/package.json \
+            deploy/node_modules/@swc/helpers/esm/_interop_require_default.js
+          do
+            if [ -f "$file" ]; then
+              echo "FOUND: $file"
+            else
+              echo "MISSING: $file"
+              exit 1
+            fi
+          done
 
           cd deploy
           zip -r ../node-app.zip .
