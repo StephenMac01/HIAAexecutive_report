@@ -9,6 +9,10 @@ on:
 env:
   AZURE_WEBAPP_NAME: hiaaexecutivereport
   NODE_VERSION: "20.x"
+  PNPM_VERSION: "11.16.0"
+
+permissions:
+  contents: read
 
 jobs:
   build-and-deploy:
@@ -19,10 +23,10 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install pnpm
-        - uses: pnpm/action-setup@v4
-          with:
-        version: 11.16.0
-    run_install: false
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -41,7 +45,9 @@ jobs:
           SHAREPOINT_CLIENT_ID: ${{ secrets.SHAREPOINT_CLIENT_ID }}
           SHAREPOINT_CLIENT_SECRET: ${{ secrets.SHAREPOINT_CLIENT_SECRET }}
           SHAREPOINT_SITE_URL: ${{ secrets.SHAREPOINT_SITE_URL }}
+          SHAREPOINT_BASE_PATH: ${{ secrets.SHAREPOINT_BASE_PATH }}
           SHAREPOINT_FILE_TEMPLATE: ${{ secrets.SHAREPOINT_FILE_TEMPLATE }}
+          KPI_CACHE_SECONDS: ${{ secrets.KPI_CACHE_SECONDS }}
           REVALIDATE_SECRET: ${{ secrets.REVALIDATE_SECRET }}
 
       - name: Prepare standalone deployment
@@ -49,12 +55,16 @@ jobs:
           if [ -d "public" ]; then
             cp -r public .next/standalone/public
           fi
+
           mkdir -p .next/standalone/.next
-          cp -r .next/static .next/standalone/.next/static
+
+          if [ -d ".next/static" ]; then
+            cp -r .next/static .next/standalone/.next/static
+          fi
 
       - name: Deploy to Azure Web App
         uses: azure/webapps-deploy@v3
         with:
-          app-name: hiaaexecutivereport
+          app-name: ${{ env.AZURE_WEBAPP_NAME }}
           publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
           package: .next/standalone
