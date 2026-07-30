@@ -1,5 +1,6 @@
 allowBuilds:
-  msw: true
   sharp: true
-  overrides:
-  body-parser: ">=2.3.0"
+  unrs-resolver: true
+
+overrides:
+  hono: 4.12.25
