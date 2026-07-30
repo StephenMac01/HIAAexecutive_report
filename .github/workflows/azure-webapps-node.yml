@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 env:
-  AZURE_WEBAPP_NAME: hiaaexecutivereport
+  AZURE_WEBAPP_NAME: hiaaexecutivereport-v2
   NODE_VERSION: "24.x"
   PNPM_VERSION: "11.16.0"
 
