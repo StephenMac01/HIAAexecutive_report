@@ -8,7 +8,7 @@ on:
 
 env:
   AZURE_WEBAPP_NAME: hiaaexecutivereport-v2
-  NODE_VERSION: "24.x"
+  NODE_VERSION: "22.x"
   PNPM_VERSION: "11.16.0"
 
 permissions:
@@ -27,10 +27,11 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
-      - name: Enable pnpm with Corepack
-        run: |
-          corepack enable
-          corepack prepare pnpm@${PNPM_VERSION} --activate
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
 
       - name: Show versions
         run: |
@@ -57,37 +58,33 @@ jobs:
             cp -a public deploy/public
           fi
 
-          rm -rf deploy/node_modules/@swc/helpers
-          mkdir -p deploy/node_modules/@swc
-          cp -a node_modules/@swc/helpers deploy/node_modules/@swc/helpers
+          echo "Verifying standalone deployment package"
 
-          echo "Verifying standalone server"
           test -f deploy/server.js
+          test -d deploy/node_modules
+          test -f deploy/node_modules/next/package.json
 
-          echo "Verifying SWC helper package"
-          test -f deploy/node_modules/@swc/helpers/package.json
-          test -f deploy/node_modules/@swc/helpers/esm/_interop_require_default.js
+          echo "Next.js package:"
+          ls -la deploy/node_modules/next
 
-          echo "Checking exact SWC helper file"
-          ls -la deploy/node_modules/@swc/helpers/esm/_interop_require_default.js
-
-          echo "Deployment package contents"
+          echo "Deployment root:"
           ls -la deploy
 
-      - name: Ensure Oryx files are not included
+      - name: Create deployment ZIP
         run: |
-          rm -f deploy/oryx-manifest.toml
-          rm -f deploy/node_modules.tar.gz
+          cd deploy
+          zip -r ../node-app.zip .
+          cd ..
 
-          test ! -f deploy/oryx-manifest.toml
-          test ! -f deploy/node_modules.tar.gz
+          echo "Verifying ZIP contents"
+          unzip -l node-app.zip | grep "server.js"
+          unzip -l node-app.zip | grep "node_modules/next/package.json"
 
       - name: Upload deployment artifact
         uses: actions/upload-artifact@v4
         with:
           name: node-app
-          path: deploy
-          include-hidden-files: true
+          path: node-app.zip
 
   deploy:
     runs-on: ubuntu-latest
@@ -101,7 +98,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: node-app
-          path: deploy
+          path: artifact
 
       - name: Deploy to Azure Web App
         id: deploy-to-webapp
@@ -109,4 +106,4 @@ jobs:
         with:
           app-name: ${{ env.AZURE_WEBAPP_NAME }}
           publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
-          package: deploy
+          package: artifact/node-app.zip
