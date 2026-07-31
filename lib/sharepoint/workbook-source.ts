@@ -36,6 +36,18 @@ export function kpiCacheTag(kpiId: string): string {
 }
 
 /**
+ * Reads the bundled local workbook.
+ */
+async function readLocalWorkbook(kpiId: string): Promise<ArrayBuffer> {
+  const buffer = await readFile(localWorkbookPath(kpiId));
+
+  return buffer.buffer.slice(
+    buffer.byteOffset,
+    buffer.byteOffset + buffer.byteLength,
+  ) as ArrayBuffer;
+}
+
+/**
  * Returns the KPI workbook as an ArrayBuffer.
  *
  * Resolution order:
@@ -50,20 +62,13 @@ export async function getKpiWorkbookBuffer(
       return await downloadSiteFile(kpiDrivePath(kpiId));
     } catch (error: unknown) {
       console.error(
-        `[CNS HIAA] SharePoint fetch failed for ${kpiId}:`,
+        `[CNS HIAA] SharePoint fetch failed for ${kpiId}. Using local fallback:`,
         error instanceof Error ? error.message : error,
       );
-
-      throw error;
     }
   }
 
-  const buffer = await readFile(localWorkbookPath(kpiId));
-
-  return buffer.buffer.slice(
-    buffer.byteOffset,
-    buffer.byteOffset + buffer.byteLength,
-  ) as ArrayBuffer;
+  return readLocalWorkbook(kpiId);
 }
 
 /**
