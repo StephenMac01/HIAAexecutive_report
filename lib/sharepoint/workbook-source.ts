@@ -29,6 +29,13 @@ function localWorkbookPath(kpiId: string): string {
 }
 
 /**
+ * Returns the Next.js cache tag used for a KPI workbook.
+ */
+export function kpiCacheTag(kpiId: string): string {
+  return `kpi-workbook:${kpiId}`;
+}
+
+/**
  * Returns the KPI workbook as an ArrayBuffer.
  *
  * Resolution order:
