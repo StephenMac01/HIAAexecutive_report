@@ -16,6 +16,7 @@ permissions:
 
 jobs:
   build:
+    name: Build deployment package
     runs-on: ubuntu-latest
 
     steps:
@@ -26,6 +27,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
@@ -33,18 +35,29 @@ jobs:
           version: ${{ env.PNPM_VERSION }}
           run_install: false
 
-      - name: Show versions
+      - name: Show runtime versions
+        shell: bash
         run: |
+          set -euxo pipefail
+
           node --version
           pnpm --version
 
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+      - name: Install application dependencies
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          pnpm install --frozen-lockfile
 
       - name: Build Next.js application
-        run: pnpm build
+        shell: bash
+        run: |
+          set -euxo pipefail
 
-      - name: Prepare standalone application
+          pnpm build
+
+      - name: Prepare standalone Azure application
         shell: bash
         run: |
           set -euxo pipefail
@@ -55,7 +68,7 @@ jobs:
           echo "Copying Next.js standalone output"
           cp -a .next/standalone/. deploy/
 
-          echo "Copying static assets"
+          echo "Copying Next.js static assets"
           mkdir -p deploy/.next
           cp -a .next/static deploy/.next/static
 
@@ -64,137 +77,49 @@ jobs:
             cp -a public deploy/public
           fi
 
-          echo "Defining package copy helper"
+          echo "Copying package metadata"
+          cp package.json deploy/package.json
+          cp pnpm-lock.yaml deploy/pnpm-lock.yaml
 
-          copy_package() {
-            PACKAGE_NAME="$1"
+          if [ -f pnpm-workspace.yaml ]; then
+            cp pnpm-workspace.yaml deploy/pnpm-workspace.yaml
+          fi
 
-            ROOT_DESTINATION="deploy/node_modules/$PACKAGE_NAME"
-            NEXT_DESTINATION="deploy/.next/node_modules/$PACKAGE_NAME"
+          echo "Installing the complete production dependency tree"
 
-            PACKAGE_JSON=""
+          pnpm install \
+            --dir deploy \
+            --prod \
+            --frozen-lockfile \
+            --ignore-scripts
 
-            if [ -f "node_modules/$PACKAGE_NAME/package.json" ]; then
-              PACKAGE_JSON="node_modules/$PACKAGE_NAME/package.json"
-            else
-              PACKAGE_JSON=$(find node_modules/.pnpm \
-                -path "*/node_modules/$PACKAGE_NAME/package.json" \
-                -print \
-                -quit)
-            fi
+          echo "Verifying deployment files"
 
-            if [ -z "$PACKAGE_JSON" ]; then
-              echo "ERROR: Could not locate package: $PACKAGE_NAME"
-              exit 1
-            fi
+          test -f deploy/server.js
+          test -f deploy/package.json
+          test -f deploy/node_modules/next/package.json
+          test -f deploy/node_modules/pg/package.json
+          test -f deploy/node_modules/pg-types/package.json
+          test -f deploy/node_modules/postgres-bytea/package.json
+          test -f deploy/node_modules/obuf/package.json
+          test -f deploy/node_modules/postgres-range/package.json
+          test -f deploy/node_modules/pg-numeric/package.json
 
-            PACKAGE_DIR=$(dirname "$PACKAGE_JSON")
-
-            echo "Copying $PACKAGE_NAME"
-            echo "Source: $PACKAGE_DIR"
-            echo "Root destination: $ROOT_DESTINATION"
-            echo "Next destination: $NEXT_DESTINATION"
-
-            rm -rf "$ROOT_DESTINATION"
-            rm -rf "$NEXT_DESTINATION"
-
-            mkdir -p "$(dirname "$ROOT_DESTINATION")"
-            mkdir -p "$(dirname "$NEXT_DESTINATION")"
-
-            cp -aL "$PACKAGE_DIR" "$ROOT_DESTINATION"
-            cp -aL "$PACKAGE_DIR" "$NEXT_DESTINATION"
-          }
-
-          RUNTIME_PACKAGES=(
-            "@swc/helpers"
-            "@next/env"
-            "pg"
-            "pg-connection-string"
-            "pg-pool"
-            "pg-protocol"
-            "pg-types"
-            "pgpass"
-            "pg-int8"
-            "pg-numeric"
-            "postgres-array"
-            "postgres-bytea"
-            "postgres-date"
-            "postgres-interval"
-            "postgres-range"
-            "obuf"
-            "split2"
-          )
-
-          for PACKAGE_NAME in "${RUNTIME_PACKAGES[@]}"; do
-            copy_package "$PACKAGE_NAME"
-          done
-
-          echo "Verifying required runtime files"
-
-          REQUIRED_FILES=(
-            "deploy/server.js"
-            "deploy/node_modules/next/package.json"
-            "deploy/node_modules/@swc/helpers/package.json"
-            "deploy/node_modules/@swc/helpers/esm/_interop_require_default.js"
-            "deploy/node_modules/@next/env/package.json"
-            "deploy/node_modules/pg/package.json"
-            "deploy/node_modules/pg-types/package.json"
-            "deploy/node_modules/pg-protocol/package.json"
-            "deploy/node_modules/pg-pool/package.json"
-            "deploy/node_modules/pgpass/package.json"
-            "deploy/node_modules/pg-int8/package.json"
-            "deploy/node_modules/pg-numeric/package.json"
-            "deploy/node_modules/postgres-array/package.json"
-            "deploy/node_modules/postgres-bytea/package.json"
-            "deploy/node_modules/postgres-date/package.json"
-            "deploy/node_modules/postgres-interval/package.json"
-            "deploy/node_modules/postgres-range/package.json"
-            "deploy/node_modules/obuf/package.json"
-            "deploy/node_modules/split2/package.json"
-            "deploy/.next/node_modules/pg-types/package.json"
-            "deploy/.next/node_modules/pg-numeric/package.json"
-            "deploy/.next/node_modules/postgres-bytea/package.json"
-            "deploy/.next/node_modules/postgres-range/package.json"
-            "deploy/.next/node_modules/obuf/package.json"
-          )
-
-          for FILE in "${REQUIRED_FILES[@]}"; do
-            if [ -f "$FILE" ]; then
-              echo "FOUND: $FILE"
-            else
-              echo "MISSING: $FILE"
-              exit 1
-            fi
-          done
-
-          echo "Testing dependency resolution from deployment root"
+          echo "Testing runtime dependency loading"
 
           (
             cd deploy
 
-            node -e "require.resolve('next')"
-            node -e "require.resolve('@swc/helpers/esm/_interop_require_default.js')"
-            node -e "require.resolve('@next/env')"
-            node -e "require.resolve('pg')"
-            node -e "require.resolve('pg-types')"
-            node -e "require.resolve('pg-numeric')"
-            node -e "require.resolve('postgres-bytea')"
-            node -e "require.resolve('postgres-range')"
-            node -e "require.resolve('obuf')"
-          )
-
-          echo "Testing PostgreSQL package loading"
-
-          (
-            cd deploy
+            node -e "require('next'); console.log('next loaded successfully')"
             node -e "require('pg'); console.log('pg loaded successfully')"
             node -e "require('pg-types'); console.log('pg-types loaded successfully')"
-            node -e "require('pg-numeric'); console.log('pg-numeric loaded successfully')"
             node -e "require('postgres-bytea'); console.log('postgres-bytea loaded successfully')"
+            node -e "require('obuf'); console.log('obuf loaded successfully')"
             node -e "require('postgres-range'); console.log('postgres-range loaded successfully')"
+            node -e "require('pg-numeric'); console.log('pg-numeric loaded successfully')"
           )
 
-          echo "Creating deployment archive"
+          echo "Creating Azure deployment archive"
 
           (
             cd deploy
@@ -204,13 +129,15 @@ jobs:
           echo "Verifying deployment archive"
 
           test -f node-app.zip
+
           unzip -l node-app.zip | grep "server.js"
           unzip -l node-app.zip | grep "node_modules/next/package.json"
           unzip -l node-app.zip | grep "node_modules/pg/package.json"
           unzip -l node-app.zip | grep "node_modules/pg-types/package.json"
-          unzip -l node-app.zip | grep "node_modules/pg-numeric/package.json"
-          unzip -l node-app.zip | grep "node_modules/postgres-range/package.json"
+          unzip -l node-app.zip | grep "node_modules/postgres-bytea/package.json"
           unzip -l node-app.zip | grep "node_modules/obuf/package.json"
+          unzip -l node-app.zip | grep "node_modules/postgres-range/package.json"
+          unzip -l node-app.zip | grep "node_modules/pg-numeric/package.json"
 
       - name: Upload deployment artifact
         uses: actions/upload-artifact@v4
@@ -221,6 +148,7 @@ jobs:
           retention-days: 3
 
   deploy:
+    name: Deploy to Azure App Service
     runs-on: ubuntu-latest
     needs: build
 
@@ -243,18 +171,12 @@ jobs:
 
           unzip -l artifact/node-app.zip | grep "server.js"
           unzip -l artifact/node-app.zip | grep "node_modules/next/package.json"
-          unzip -l artifact/node-app.zip | grep "node_modules/@swc/helpers/esm/_interop_require_default.js"
-          unzip -l artifact/node-app.zip | grep "node_modules/@next/env/package.json"
           unzip -l artifact/node-app.zip | grep "node_modules/pg/package.json"
           unzip -l artifact/node-app.zip | grep "node_modules/pg-types/package.json"
-          unzip -l artifact/node-app.zip | grep "node_modules/pg-numeric/package.json"
           unzip -l artifact/node-app.zip | grep "node_modules/postgres-bytea/package.json"
-          unzip -l artifact/node-app.zip | grep "node_modules/postgres-range/package.json"
           unzip -l artifact/node-app.zip | grep "node_modules/obuf/package.json"
-          unzip -l artifact/node-app.zip | grep ".next/node_modules/pg-types/package.json"
-          unzip -l artifact/node-app.zip | grep ".next/node_modules/pg-numeric/package.json"
-          unzip -l artifact/node-app.zip | grep ".next/node_modules/postgres-range/package.json"
-          unzip -l artifact/node-app.zip | grep ".next/node_modules/obuf/package.json"
+          unzip -l artifact/node-app.zip | grep "node_modules/postgres-range/package.json"
+          unzip -l artifact/node-app.zip | grep "node_modules/pg-numeric/package.json"
 
       - name: Deploy to Azure Web App
         uses: azure/webapps-deploy@v3
