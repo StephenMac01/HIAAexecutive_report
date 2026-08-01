@@ -45,6 +45,7 @@ jobs:
         run: pnpm build
 
       - name: Prepare standalone application
+        shell: bash
         run: |
           set -euxo pipefail
 
@@ -63,68 +64,127 @@ jobs:
             cp -a public deploy/public
           fi
 
-          echo "Locating complete SWC helpers package"
-          SWC_HELPER_FILE="$(node -p "require.resolve('@swc/helpers/esm/_interop_require_default.js')")"
-          SWC_HELPERS_DIR="$(dirname "$(dirname "$SWC_HELPER_FILE")")"
+          echo "Defining pnpm package copy helper"
 
-          echo "SWC helper file: $SWC_HELPER_FILE"
-          echo "SWC helpers directory: $SWC_HELPERS_DIR"
+          copy_pnpm_package() {
+            PACKAGE_NAME="$1"
+            DESTINATION="deploy/node_modules/$PACKAGE_NAME"
 
-          echo "Replacing incomplete SWC helpers directory"
-          rm -rf deploy/node_modules/@swc/helpers
-          mkdir -p deploy/node_modules/@swc
-          cp -aL "$SWC_HELPERS_DIR" deploy/node_modules/@swc/helpers
+            PACKAGE_JSON=""
 
-                    echo "Copying @next/env"
-
-          NEXT_ENV_PACKAGE="$(node -p "require.resolve('@next/env/package.json')")"
-          NEXT_ENV_DIR="$(dirname "$NEXT_ENV_PACKAGE")"
-
-          echo "@next/env directory: $NEXT_ENV_DIR"
-
-          rm -rf deploy/node_modules/@next/env
-          mkdir -p deploy/node_modules/@next
-          cp -aL "$NEXT_ENV_DIR" deploy/node_modules/@next/env
-
-          echo "Checking standalone package"
-
-                    echo "Checking standalone package"
-
-          for file in \
-            deploy/server.js \
-            deploy/node_modules/next/package.json \
-            deploy/node_modules/react/package.json \
-            deploy/node_modules/react-dom/package.json \
-            deploy/node_modules/@swc/helpers/package.json \
-            deploy/node_modules/@swc/helpers/esm/_interop_require_default.js \
-            deploy/node_modules/@next/env/package.json
-          do
-            if [ -f "$file" ]; then
-              echo "FOUND: $file"
+            if [ -f "node_modules/$PACKAGE_NAME/package.json" ]; then
+              PACKAGE_JSON="node_modules/$PACKAGE_NAME/package.json"
             else
-              echo "MISSING: $file"
+              PACKAGE_JSON=$(find node_modules/.pnpm \
+                -path "*/node_modules/$PACKAGE_NAME/package.json" \
+                -print \
+                -quit)
+            fi
+
+            if [ -z "$PACKAGE_JSON" ]; then
+              echo "ERROR: Could not locate package: $PACKAGE_NAME"
+              exit 1
+            fi
+
+            PACKAGE_DIR=$(dirname "$PACKAGE_JSON")
+
+            echo "Copying $PACKAGE_NAME"
+            echo "Source: $PACKAGE_DIR"
+            echo "Destination: $DESTINATION"
+
+            rm -rf "$DESTINATION"
+            mkdir -p "$(dirname "$DESTINATION")"
+            cp -aL "$PACKAGE_DIR" "$DESTINATION"
+          }
+
+          echo "Copying SWC helpers"
+          copy_pnpm_package "@swc/helpers"
+
+          echo "Copying Next.js environment package"
+          copy_pnpm_package "@next/env"
+
+          echo "Copying PostgreSQL runtime packages"
+
+          POSTGRES_PACKAGES=(
+            "pg"
+            "pg-connection-string"
+            "pg-pool"
+            "pg-protocol"
+            "pg-types"
+            "pgpass"
+            "pg-int8"
+            "postgres-array"
+            "postgres-bytea"
+            "postgres-date"
+            "postgres-interval"
+            "split2"
+          )
+
+          for PACKAGE_NAME in "${POSTGRES_PACKAGES[@]}"; do
+            copy_pnpm_package "$PACKAGE_NAME"
+          done
+
+          echo "Verifying required runtime files"
+
+          REQUIRED_FILES=(
+            "deploy/server.js"
+            "deploy/node_modules/next/package.json"
+            "deploy/node_modules/@swc/helpers/package.json"
+            "deploy/node_modules/@swc/helpers/esm/_interop_require_default.js"
+            "deploy/node_modules/@next/env/package.json"
+            "deploy/node_modules/pg/package.json"
+            "deploy/node_modules/pg-types/package.json"
+            "deploy/node_modules/pg-protocol/package.json"
+            "deploy/node_modules/pg-pool/package.json"
+            "deploy/node_modules/pgpass/package.json"
+            "deploy/node_modules/pg-int8/package.json"
+            "deploy/node_modules/postgres-array/package.json"
+            "deploy/node_modules/postgres-bytea/package.json"
+            "deploy/node_modules/postgres-date/package.json"
+            "deploy/node_modules/postgres-interval/package.json"
+          )
+
+          for FILE in "${REQUIRED_FILES[@]}"; do
+            if [ -f "$FILE" ]; then
+              echo "FOUND: $FILE"
+            else
+              echo "MISSING: $FILE"
               exit 1
             fi
           done
-          echo "Testing packaged server dependency resolution"
+
+          echo "Testing dependency resolution from deployment directory"
+
           (
             cd deploy
+
             node -e "require.resolve('next')"
             node -e "require.resolve('@swc/helpers/esm/_interop_require_default.js')"
             node -e "require.resolve('@next/env')"
+            node -e "require.resolve('pg')"
+            node -e "require.resolve('pg-types')"
+            node -e "require.resolve('pg-protocol')"
+            node -e "require.resolve('pg-pool')"
+            node -e "require.resolve('pgpass')"
+            node -e "require.resolve('postgres-array')"
           )
 
-          echo "Creating deployment ZIP"
+          echo "Creating deployment archive"
+
           (
             cd deploy
             zip -qr ../node-app.zip .
           )
 
-          echo "Checking ZIP package"
+          echo "Deployment archive created"
+
+          test -f node-app.zip
           unzip -l node-app.zip | grep "server.js"
           unzip -l node-app.zip | grep "node_modules/next/package.json"
           unzip -l node-app.zip | grep "node_modules/@swc/helpers/esm/_interop_require_default.js"
           unzip -l node-app.zip | grep "node_modules/@next/env/package.json"
+          unzip -l node-app.zip | grep "node_modules/pg/package.json"
+          unzip -l node-app.zip | grep "node_modules/pg-types/package.json"
 
       - name: Upload deployment artifact
         uses: actions/upload-artifact@v4
@@ -132,6 +192,7 @@ jobs:
           name: node-app
           path: node-app.zip
           if-no-files-found: error
+          retention-days: 3
 
   deploy:
     runs-on: ubuntu-latest
@@ -148,11 +209,22 @@ jobs:
           path: artifact
 
       - name: Verify downloaded artifact
+        shell: bash
         run: |
+          set -euxo pipefail
+
           test -f artifact/node-app.zip
+
           unzip -l artifact/node-app.zip | grep "server.js"
           unzip -l artifact/node-app.zip | grep "node_modules/next/package.json"
           unzip -l artifact/node-app.zip | grep "node_modules/@swc/helpers/esm/_interop_require_default.js"
+          unzip -l artifact/node-app.zip | grep "node_modules/@next/env/package.json"
+          unzip -l artifact/node-app.zip | grep "node_modules/pg/package.json"
+          unzip -l artifact/node-app.zip | grep "node_modules/pg-types/package.json"
+          unzip -l artifact/node-app.zip | grep "node_modules/pg-protocol/package.json"
+          unzip -l artifact/node-app.zip | grep "node_modules/pg-pool/package.json"
+          unzip -l artifact/node-app.zip | grep "node_modules/pgpass/package.json"
+          unzip -l artifact/node-app.zip | grep "node_modules/postgres-array/package.json"
 
       - name: Deploy to Azure Web App
         uses: azure/webapps-deploy@v3
