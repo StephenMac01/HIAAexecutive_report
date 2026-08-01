@@ -68,7 +68,9 @@ jobs:
 
           copy_pnpm_package() {
             PACKAGE_NAME="$1"
-            DESTINATION="deploy/node_modules/$PACKAGE_NAME"
+
+            ROOT_DESTINATION="deploy/node_modules/$PACKAGE_NAME"
+            NEXT_DESTINATION="deploy/.next/node_modules/$PACKAGE_NAME"
 
             PACKAGE_JSON=""
 
@@ -90,11 +92,17 @@ jobs:
 
             echo "Copying $PACKAGE_NAME"
             echo "Source: $PACKAGE_DIR"
-            echo "Destination: $DESTINATION"
+            echo "Root destination: $ROOT_DESTINATION"
+            echo "Next destination: $NEXT_DESTINATION"
 
-            rm -rf "$DESTINATION"
-            mkdir -p "$(dirname "$DESTINATION")"
-            cp -aL "$PACKAGE_DIR" "$DESTINATION"
+            rm -rf "$ROOT_DESTINATION"
+            rm -rf "$NEXT_DESTINATION"
+
+            mkdir -p "$(dirname "$ROOT_DESTINATION")"
+            mkdir -p "$(dirname "$NEXT_DESTINATION")"
+
+            cp -aL "$PACKAGE_DIR" "$ROOT_DESTINATION"
+            cp -aL "$PACKAGE_DIR" "$NEXT_DESTINATION"
           }
 
           echo "Copying SWC helpers"
@@ -132,6 +140,7 @@ jobs:
             "deploy/node_modules/@swc/helpers/package.json"
             "deploy/node_modules/@swc/helpers/esm/_interop_require_default.js"
             "deploy/node_modules/@next/env/package.json"
+
             "deploy/node_modules/pg/package.json"
             "deploy/node_modules/pg-types/package.json"
             "deploy/node_modules/pg-protocol/package.json"
@@ -142,6 +151,17 @@ jobs:
             "deploy/node_modules/postgres-bytea/package.json"
             "deploy/node_modules/postgres-date/package.json"
             "deploy/node_modules/postgres-interval/package.json"
+
+            "deploy/.next/node_modules/pg/package.json"
+            "deploy/.next/node_modules/pg-types/package.json"
+            "deploy/.next/node_modules/pg-protocol/package.json"
+            "deploy/.next/node_modules/pg-pool/package.json"
+            "deploy/.next/node_modules/pgpass/package.json"
+            "deploy/.next/node_modules/pg-int8/package.json"
+            "deploy/.next/node_modules/postgres-array/package.json"
+            "deploy/.next/node_modules/postgres-bytea/package.json"
+            "deploy/.next/node_modules/postgres-date/package.json"
+            "deploy/.next/node_modules/postgres-interval/package.json"
           )
 
           for FILE in "${REQUIRED_FILES[@]}"; do
@@ -153,7 +173,7 @@ jobs:
             fi
           done
 
-          echo "Testing dependency resolution from deployment directory"
+          echo "Testing dependency resolution from deployment root"
 
           (
             cd deploy
@@ -169,6 +189,41 @@ jobs:
             node -e "require.resolve('postgres-array')"
           )
 
+          echo "Testing dependency resolution from Next runtime directory"
+
+          (
+            cd deploy/.next
+
+            node -e "require.resolve('pg')"
+            node -e "require.resolve('pg-types')"
+            node -e "require.resolve('pg-protocol')"
+            node -e "require.resolve('pg-pool')"
+            node -e "require.resolve('pgpass')"
+            node -e "require.resolve('postgres-array')"
+          )
+
+          echo "Testing dependency resolution from externalized pg directory"
+
+          PG_EXTERNAL_DIR=$(find deploy/.next/node_modules \
+            -maxdepth 1 \
+            -type d \
+            -name "pg-*" \
+            -print \
+            -quit)
+
+          if [ -n "$PG_EXTERNAL_DIR" ]; then
+            echo "Externalized pg directory: $PG_EXTERNAL_DIR"
+
+            (
+              cd "$PG_EXTERNAL_DIR"
+              node -e "require.resolve('pg-types')"
+              node -e "require.resolve('pg-protocol')"
+              node -e "require.resolve('pg-pool')"
+            )
+          else
+            echo "No hashed externalized pg directory was found during packaging"
+          fi
+
           echo "Creating deployment archive"
 
           (
@@ -179,12 +234,14 @@ jobs:
           echo "Deployment archive created"
 
           test -f node-app.zip
+
           unzip -l node-app.zip | grep "server.js"
           unzip -l node-app.zip | grep "node_modules/next/package.json"
           unzip -l node-app.zip | grep "node_modules/@swc/helpers/esm/_interop_require_default.js"
           unzip -l node-app.zip | grep "node_modules/@next/env/package.json"
           unzip -l node-app.zip | grep "node_modules/pg/package.json"
           unzip -l node-app.zip | grep "node_modules/pg-types/package.json"
+          unzip -l node-app.zip | grep ".next/node_modules/pg-types/package.json"
 
       - name: Upload deployment artifact
         uses: actions/upload-artifact@v4
@@ -219,12 +276,20 @@ jobs:
           unzip -l artifact/node-app.zip | grep "node_modules/next/package.json"
           unzip -l artifact/node-app.zip | grep "node_modules/@swc/helpers/esm/_interop_require_default.js"
           unzip -l artifact/node-app.zip | grep "node_modules/@next/env/package.json"
+
           unzip -l artifact/node-app.zip | grep "node_modules/pg/package.json"
           unzip -l artifact/node-app.zip | grep "node_modules/pg-types/package.json"
           unzip -l artifact/node-app.zip | grep "node_modules/pg-protocol/package.json"
           unzip -l artifact/node-app.zip | grep "node_modules/pg-pool/package.json"
           unzip -l artifact/node-app.zip | grep "node_modules/pgpass/package.json"
           unzip -l artifact/node-app.zip | grep "node_modules/postgres-array/package.json"
+
+          unzip -l artifact/node-app.zip | grep ".next/node_modules/pg/package.json"
+          unzip -l artifact/node-app.zip | grep ".next/node_modules/pg-types/package.json"
+          unzip -l artifact/node-app.zip | grep ".next/node_modules/pg-protocol/package.json"
+          unzip -l artifact/node-app.zip | grep ".next/node_modules/pg-pool/package.json"
+          unzip -l artifact/node-app.zip | grep ".next/node_modules/pgpass/package.json"
+          unzip -l artifact/node-app.zip | grep ".next/node_modules/postgres-array/package.json"
 
       - name: Deploy to Azure Web App
         uses: azure/webapps-deploy@v3
