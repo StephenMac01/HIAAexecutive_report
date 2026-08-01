@@ -23,6 +23,7 @@
     "obuf": "^1.1.2",
     "pg": "^8.22.0",
     "pg-types": "^4.1.0",
+    "postgres-range": "^1.1.4",
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "recharts": "3.8.0",
