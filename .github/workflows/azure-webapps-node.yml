@@ -1,0 +1,162 @@
+name: Build and deploy CNS HIAA Dashboard to Azure
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  AZURE_WEBAPP_NAME: hiaaexecutivereport-v2
+  NODE_VERSION: "22.x"
+  PNPM_VERSION: "11.16.0"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+
+      - name: Show versions
+        run: |
+          node --version
+          pnpm --version
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build Next.js application
+        run: pnpm build
+
+      - name: Prepare standalone application
+        run: |
+          set -euxo pipefail
+
+          rm -rf deploy node-app.zip
+          mkdir -p deploy
+
+          echo "Copying Next.js standalone output"
+          cp -a .next/standalone/. deploy/
+
+          echo "Copying static assets"
+          mkdir -p deploy/.next
+          cp -a .next/static deploy/.next/static
+
+          if [ -d public ]; then
+            echo "Copying public assets"
+            cp -a public deploy/public
+          fi
+
+          echo "Locating complete SWC helpers package"
+          SWC_HELPER_FILE="$(node -p "require.resolve('@swc/helpers/esm/_interop_require_default.js')")"
+          SWC_HELPERS_DIR="$(dirname "$(dirname "$SWC_HELPER_FILE")")"
+
+          echo "SWC helper file: $SWC_HELPER_FILE"
+          echo "SWC helpers directory: $SWC_HELPERS_DIR"
+
+          echo "Replacing incomplete SWC helpers directory"
+          rm -rf deploy/node_modules/@swc/helpers
+          mkdir -p deploy/node_modules/@swc
+          cp -aL "$SWC_HELPERS_DIR" deploy/node_modules/@swc/helpers
+
+                    echo "Copying @next/env"
+
+          NEXT_ENV_PACKAGE="$(node -p "require.resolve('@next/env/package.json')")"
+          NEXT_ENV_DIR="$(dirname "$NEXT_ENV_PACKAGE")"
+
+          echo "@next/env directory: $NEXT_ENV_DIR"
+
+          rm -rf deploy/node_modules/@next/env
+          mkdir -p deploy/node_modules/@next
+          cp -aL "$NEXT_ENV_DIR" deploy/node_modules/@next/env
+
+          echo "Checking standalone package"
+
+                    echo "Checking standalone package"
+
+          for file in \
+            deploy/server.js \
+            deploy/node_modules/next/package.json \
+            deploy/node_modules/react/package.json \
+            deploy/node_modules/react-dom/package.json \
+            deploy/node_modules/@swc/helpers/package.json \
+            deploy/node_modules/@swc/helpers/esm/_interop_require_default.js \
+            deploy/node_modules/@next/env/package.json
+          do
+            if [ -f "$file" ]; then
+              echo "FOUND: $file"
+            else
+              echo "MISSING: $file"
+              exit 1
+            fi
+          done
+          echo "Testing packaged server dependency resolution"
+          (
+            cd deploy
+            node -e "require.resolve('next')"
+            node -e "require.resolve('@swc/helpers/esm/_interop_require_default.js')"
+            node -e "require.resolve('@next/env')"
+          )
+
+          echo "Creating deployment ZIP"
+          (
+            cd deploy
+            zip -qr ../node-app.zip .
+          )
+
+          echo "Checking ZIP package"
+          unzip -l node-app.zip | grep "server.js"
+          unzip -l node-app.zip | grep "node_modules/next/package.json"
+          unzip -l node-app.zip | grep "node_modules/@swc/helpers/esm/_interop_require_default.js"
+          unzip -l node-app.zip | grep "node_modules/@next/env/package.json"
+
+      - name: Upload deployment artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: node-app
+          path: node-app.zip
+          if-no-files-found: error
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build
+
+    permissions:
+      contents: none
+
+    steps:
+      - name: Download deployment artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: node-app
+          path: artifact
+
+      - name: Verify downloaded artifact
+        run: |
+          test -f artifact/node-app.zip
+          unzip -l artifact/node-app.zip | grep "server.js"
+          unzip -l artifact/node-app.zip | grep "node_modules/next/package.json"
+          unzip -l artifact/node-app.zip | grep "node_modules/@swc/helpers/esm/_interop_require_default.js"
+
+      - name: Deploy to Azure Web App
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ env.AZURE_WEBAPP_NAME }}
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+          package: artifact/node-app.zip
