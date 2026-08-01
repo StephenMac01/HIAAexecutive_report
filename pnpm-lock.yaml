@@ -35,6 +35,9 @@ importers:
       next:
         specifier: 16.2.6
         version: 16.2.6(@babel/core@7.29.7)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+      obuf:
+        specifier: ^1.1.2
+        version: 1.1.2
       pg:
         specifier: ^8.22.0
         version: 8.22.0

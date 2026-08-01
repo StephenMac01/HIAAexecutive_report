@@ -1,20 +1,15 @@
 /** @type {import("next").NextConfig} */
 const nextConfig = {
-  // Emit a self-contained Node.js server under .next/standalone.
   output: "standalone",
 
-  // Allow v0 preview hosts to load Next.js development resources.
   allowedDevOrigins: ["*.vusercontent.net", "*.vercel.run"],
 
   images: {
     unoptimized: true,
   },
 
-  // Keep PostgreSQL packages external and load them through Node.js.
-  serverExternalPackages: ["pg", "pg-types"],
+  serverExternalPackages: ["pg"],
 
-  // Include Excel workbooks and PostgreSQL runtime dependencies
-  // in the standalone deployment output.
   outputFileTracingIncludes: {
     "/kpi/[id]": [
       "./data/**/*.xlsx",
@@ -29,6 +24,7 @@ const nextConfig = {
       "./node_modules/postgres-bytea/**/*",
       "./node_modules/postgres-date/**/*",
       "./node_modules/postgres-interval/**/*",
+      "./node_modules/obuf/**/*",
       "./node_modules/split2/**/*",
     ],
 
@@ -45,6 +41,7 @@ const nextConfig = {
       "./node_modules/postgres-bytea/**/*",
       "./node_modules/postgres-date/**/*",
       "./node_modules/postgres-interval/**/*",
+      "./node_modules/obuf/**/*",
       "./node_modules/split2/**/*",
     ],
 
@@ -60,11 +57,11 @@ const nextConfig = {
       "./node_modules/postgres-bytea/**/*",
       "./node_modules/postgres-date/**/*",
       "./node_modules/postgres-interval/**/*",
+      "./node_modules/obuf/**/*",
       "./node_modules/split2/**/*",
     ],
   },
 
-  // Baseline security headers.
   async headers() {
     const csp = [
       "default-src 'self'",
