@@ -41,6 +41,9 @@ importers:
       pg:
         specifier: ^8.22.0
         version: 8.22.0
+      pg-numeric:
+        specifier: ^1.0.2
+        version: 1.0.2
       pg-types:
         specifier: ^4.1.0
         version: 4.1.0
