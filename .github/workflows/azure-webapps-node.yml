@@ -1,0 +1,189 @@
+name: Build and deploy CNS HIAA Dashboard to Azure
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  AZURE_WEBAPP_NAME: hiaaexecutivereport-v2
+  NODE_VERSION: "22.x"
+  PNPM_VERSION: "11.16.0"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build deployment package
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Show runtime versions
+        shell: bash
+        run: |
+          set -euxo pipefail
+          node --version
+          pnpm --version
+
+      - name: Install application dependencies
+        shell: bash
+        run: |
+          set -euxo pipefail
+          pnpm install --frozen-lockfile
+
+      - name: Build Next.js application
+        shell: bash
+        run: |
+          set -euxo pipefail
+          pnpm build
+
+      - name: Prepare standalone Azure application
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          rm -rf deploy node-app.zip
+          mkdir -p deploy
+
+          echo "Copying Next.js standalone output"
+          cp -a .next/standalone/. deploy/
+
+          echo "Copying Next.js static assets"
+          mkdir -p deploy/.next
+          cp -a .next/static deploy/.next/static
+
+          if [ -d public ]; then
+            echo "Copying public assets"
+            cp -a public deploy/public
+          fi
+
+          echo "Copying package metadata"
+          cp package.json deploy/package.json
+          cp pnpm-lock.yaml deploy/pnpm-lock.yaml
+
+          if [ -f pnpm-workspace.yaml ]; then
+            cp pnpm-workspace.yaml deploy/pnpm-workspace.yaml
+          fi
+
+          echo "Installing complete production dependency tree"
+
+          pnpm install \
+            --dir deploy \
+            --prod \
+            --frozen-lockfile \
+            --ignore-scripts
+
+          echo "Removing stale Azure Oryx files"
+
+          rm -f deploy/oryx-manifest.toml
+          rm -f deploy/node_modules.tar.gz
+          rm -rf deploy/__oryx_packages__
+
+          echo "Verifying deployment files"
+
+          test -f deploy/server.js
+          test -f deploy/package.json
+          test -f deploy/node_modules/next/package.json
+          test -f deploy/node_modules/pg/package.json
+
+          echo "Testing production dependency loading"
+
+          (
+            cd deploy
+            node -e "require('next'); console.log('next loaded successfully')"
+            node -e "require('pg'); console.log('pg and PostgreSQL dependencies loaded successfully')"
+          )
+
+          echo "Creating Azure deployment archive"
+
+          (
+            cd deploy
+            zip -qr ../node-app.zip .
+          )
+
+          echo "Verifying deployment archive"
+
+          test -f node-app.zip
+          unzip -l node-app.zip | grep "server.js"
+          unzip -l node-app.zip | grep "node_modules/next/package.json"
+          unzip -l node-app.zip | grep "node_modules/pg/package.json"
+          unzip -l node-app.zip | grep "node_modules/.pnpm"
+
+          if unzip -l node-app.zip | grep -q "oryx-manifest.toml"; then
+            echo "ERROR: Oryx manifest unexpectedly included"
+            exit 1
+          fi
+
+          if unzip -l node-app.zip | grep -q "node_modules.tar.gz"; then
+            echo "ERROR: Oryx node_modules archive unexpectedly included"
+            exit 1
+          fi
+
+      - name: Upload deployment artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: node-app
+          path: node-app.zip
+          if-no-files-found: error
+          retention-days: 3
+
+  deploy:
+    name: Deploy to Azure App Service
+    runs-on: ubuntu-latest
+    needs: build
+
+    permissions:
+      contents: none
+
+    steps:
+      - name: Download deployment artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: node-app
+          path: artifact
+
+      - name: Verify downloaded artifact
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          test -f artifact/node-app.zip
+          unzip -l artifact/node-app.zip | grep "server.js"
+          unzip -l artifact/node-app.zip | grep "node_modules/next/package.json"
+          unzip -l artifact/node-app.zip | grep "node_modules/pg/package.json"
+          unzip -l artifact/node-app.zip | grep "node_modules/.pnpm"
+
+          if unzip -l artifact/node-app.zip | grep -q "oryx-manifest.toml"; then
+            echo "ERROR: Oryx manifest unexpectedly included"
+            exit 1
+          fi
+
+          if unzip -l artifact/node-app.zip | grep -q "node_modules.tar.gz"; then
+            echo "ERROR: Oryx node_modules archive unexpectedly included"
+            exit 1
+          fi
+
+      - name: Deploy to Azure Web App
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ env.AZURE_WEBAPP_NAME }}
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+          package: artifact/node-app.zip
