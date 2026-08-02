@@ -40,6 +40,7 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
+
           node --version
           pnpm --version
 
@@ -47,12 +48,14 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
+
           pnpm install --frozen-lockfile
 
       - name: Build Next.js application
         shell: bash
         run: |
           set -euxo pipefail
+
           pnpm build
 
       - name: Prepare standalone Azure application
@@ -150,6 +153,8 @@ jobs:
             exit 1
           fi
 
+          echo "Deployment archive is ready"
+
       - name: Upload deployment artifact
         uses: actions/upload-artifact@v4
         with:
@@ -196,9 +201,93 @@ jobs:
             exit 1
           fi
 
-      - name: Deploy to Azure Web App
-        uses: azure/webapps-deploy@v3
-        with:
-          app-name: ${{ env.AZURE_WEBAPP_NAME }}
-          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
-          package: artifact/node-app.zip
+      - name: Read Azure publish-profile credentials
+        shell: bash
+        env:
+          AZURE_PUBLISH_PROFILE: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+        run: |
+          set -euo pipefail
+
+          python - <<'PY'
+          import os
+          import xml.etree.ElementTree as ET
+
+          profile_xml = os.environ.get("AZURE_PUBLISH_PROFILE", "").strip()
+
+          if not profile_xml:
+              raise SystemExit(
+                  "AZURE_WEBAPP_PUBLISH_PROFILE is empty or unavailable."
+              )
+
+          root = ET.fromstring(profile_xml)
+          profiles = root.findall(".//publishProfile")
+
+          if not profiles:
+              raise SystemExit(
+                  "No publishProfile entries were found in the Azure publish profile."
+              )
+
+          selected = None
+
+          for profile in profiles:
+              method = profile.attrib.get("publishMethod", "").lower()
+
+              if method in {"zipdeploy", "msdeploy"}:
+                  selected = profile
+                  break
+
+          if selected is None:
+              selected = profiles[0]
+
+          username = selected.attrib.get("userName", "")
+          password = selected.attrib.get("userPWD", "")
+
+          if not username or not password:
+              raise SystemExit(
+                  "The Azure publish profile does not contain deployment credentials."
+              )
+
+          github_env = os.environ["GITHUB_ENV"]
+
+          with open(github_env, "a", encoding="utf-8") as env_file:
+              env_file.write(f"KUDU_USERNAME={username}\n")
+              env_file.write(f"KUDU_PASSWORD={password}\n")
+
+          print("Azure Kudu deployment credentials loaded.")
+          PY
+
+      - name: Deploy clean ZIP through Azure Kudu
+        shell: bash
+        env:
+          KUDU_USERNAME: ${{ env.KUDU_USERNAME }}
+          KUDU_PASSWORD: ${{ env.KUDU_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          KUDU_URL="https://${AZURE_WEBAPP_NAME}.scm.azurewebsites.net/api/publish?type=zip&clean=true&restart=true&ignorestack=true"
+
+          echo "Deploying tested ZIP package directly through Kudu"
+
+          HTTP_STATUS=$(curl \
+            --silent \
+            --show-error \
+            --location \
+            --output kudu-response.txt \
+            --write-out "%{http_code}" \
+            --user "${KUDU_USERNAME}:${KUDU_PASSWORD}" \
+            --header "Content-Type: application/zip" \
+            --request POST \
+            --data-binary "@artifact/node-app.zip" \
+            "${KUDU_URL}")
+
+          echo "Kudu response:"
+          cat kudu-response.txt || true
+          echo
+          echo "Kudu HTTP status: ${HTTP_STATUS}"
+
+          if [ "${HTTP_STATUS}" -lt 200 ] || [ "${HTTP_STATUS}" -ge 300 ]; then
+            echo "ERROR: Azure deployment failed."
+            exit 1
+          fi
+
+          echo "Azure deployment completed successfully."
