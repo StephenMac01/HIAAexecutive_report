@@ -91,6 +91,12 @@ jobs:
             --frozen-lockfile \
             --ignore-scripts
 
+          echo "Removing stale Azure Oryx files"
+
+          rm -f deploy/oryx-manifest.toml
+          rm -f deploy/node_modules.tar.gz
+          rm -rf deploy/__oryx_packages__
+
           echo "Verifying deployment files"
 
           test -f deploy/server.js
@@ -102,7 +108,6 @@ jobs:
 
           (
             cd deploy
-
             node -e "require('next'); console.log('next loaded successfully')"
             node -e "require('pg'); console.log('pg and PostgreSQL dependencies loaded successfully')"
           )
@@ -121,6 +126,16 @@ jobs:
           unzip -l node-app.zip | grep "node_modules/next/package.json"
           unzip -l node-app.zip | grep "node_modules/pg/package.json"
           unzip -l node-app.zip | grep "node_modules/.pnpm"
+
+          if unzip -l node-app.zip | grep -q "oryx-manifest.toml"; then
+            echo "ERROR: Oryx manifest unexpectedly included"
+            exit 1
+          fi
+
+          if unzip -l node-app.zip | grep -q "node_modules.tar.gz"; then
+            echo "ERROR: Oryx node_modules archive unexpectedly included"
+            exit 1
+          fi
 
       - name: Upload deployment artifact
         uses: actions/upload-artifact@v4
@@ -156,9 +171,22 @@ jobs:
           unzip -l artifact/node-app.zip | grep "node_modules/pg/package.json"
           unzip -l artifact/node-app.zip | grep "node_modules/.pnpm"
 
+          if unzip -l artifact/node-app.zip | grep -q "oryx-manifest.toml"; then
+            echo "ERROR: Oryx manifest unexpectedly included"
+            exit 1
+          fi
+
+          if unzip -l artifact/node-app.zip | grep -q "node_modules.tar.gz"; then
+            echo "ERROR: Oryx node_modules archive unexpectedly included"
+            exit 1
+          fi
+
       - name: Deploy to Azure Web App
         uses: azure/webapps-deploy@v3
         with:
           app-name: ${{ env.AZURE_WEBAPP_NAME }}
           publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
           package: artifact/node-app.zip
+          startup-command: node server.js
+          clean: true
+          restart: true
