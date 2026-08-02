@@ -83,33 +83,44 @@ jobs:
             cp pnpm-workspace.yaml deploy/pnpm-workspace.yaml
           fi
 
-          echo "Installing complete production dependency tree"
+          if [ -f .npmrc ]; then
+            cp .npmrc deploy/.npmrc
+          fi
+
+          echo "Installing hoisted production dependency tree"
 
           pnpm install \
             --dir deploy \
             --prod \
             --frozen-lockfile \
-            --ignore-scripts
+            --ignore-scripts \
+            --config.node-linker=hoisted
 
           echo "Removing stale Azure Oryx files"
 
           rm -f deploy/oryx-manifest.toml
           rm -f deploy/node_modules.tar.gz
           rm -rf deploy/__oryx_packages__
+          rm -rf deploy/_del_node_modules
 
           echo "Verifying deployment files"
 
           test -f deploy/server.js
           test -f deploy/package.json
           test -f deploy/node_modules/next/package.json
+          test -f deploy/node_modules/@next/env/package.json
+          test -f deploy/node_modules/@swc/helpers/package.json
           test -f deploy/node_modules/pg/package.json
 
           echo "Testing production dependency loading"
 
           (
             cd deploy
+
             node -e "require('next'); console.log('next loaded successfully')"
-            node -e "require('pg'); console.log('pg and PostgreSQL dependencies loaded successfully')"
+            node -e "require('@next/env'); console.log('@next/env loaded successfully')"
+            node -e "require('@swc/helpers/_/_interop_require_default'); console.log('@swc/helpers loaded successfully')"
+            node -e "require('pg'); console.log('pg loaded successfully')"
           )
 
           echo "Creating Azure deployment archive"
@@ -122,10 +133,12 @@ jobs:
           echo "Verifying deployment archive"
 
           test -f node-app.zip
+
           unzip -l node-app.zip | grep "server.js"
           unzip -l node-app.zip | grep "node_modules/next/package.json"
+          unzip -l node-app.zip | grep "node_modules/@next/env/package.json"
+          unzip -l node-app.zip | grep "node_modules/@swc/helpers/package.json"
           unzip -l node-app.zip | grep "node_modules/pg/package.json"
-          unzip -l node-app.zip | grep "node_modules/.pnpm"
 
           if unzip -l node-app.zip | grep -q "oryx-manifest.toml"; then
             echo "ERROR: Oryx manifest unexpectedly included"
@@ -166,10 +179,12 @@ jobs:
           set -euxo pipefail
 
           test -f artifact/node-app.zip
+
           unzip -l artifact/node-app.zip | grep "server.js"
           unzip -l artifact/node-app.zip | grep "node_modules/next/package.json"
+          unzip -l artifact/node-app.zip | grep "node_modules/@next/env/package.json"
+          unzip -l artifact/node-app.zip | grep "node_modules/@swc/helpers/package.json"
           unzip -l artifact/node-app.zip | grep "node_modules/pg/package.json"
-          unzip -l artifact/node-app.zip | grep "node_modules/.pnpm"
 
           if unzip -l artifact/node-app.zip | grep -q "oryx-manifest.toml"; then
             echo "ERROR: Oryx manifest unexpectedly included"
