@@ -29,7 +29,7 @@ function isActive(href: string, pathname: string) {
   return pathname.startsWith(href)
 }
 
-export function SiteHeader({ user }: { user: CurrentUser }) {
+export function SiteHeader({ user, logoutHref }: { user: CurrentUser; logoutHref?: string }) {
   const pathname = usePathname()
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -112,13 +112,15 @@ export function SiteHeader({ user }: { user: CurrentUser }) {
             </span>
             <ChevronDown className="hidden size-4 text-muted-foreground sm:block" />
           </Link>
-          <button
-            type="button"
-            className="hidden items-center gap-2 rounded-lg bg-navy px-3 py-2 text-sm font-semibold text-navy-foreground transition-colors hover:bg-navy/90 sm:flex"
-          >
-            <LogOut className="size-4" />
-            <span className="hidden sm:inline">Logout</span>
-          </button>
+          {logoutHref ? (
+            <a
+              href={logoutHref}
+              className="hidden items-center gap-2 rounded-lg bg-navy px-3 py-2 text-sm font-semibold text-navy-foreground transition-colors hover:bg-navy/90 sm:flex"
+            >
+              <LogOut className="size-4" />
+              <span className="hidden sm:inline">Logout</span>
+            </a>
+          ) : null}
 
           {/* Mobile menu toggle */}
           <button
@@ -155,15 +157,17 @@ export function SiteHeader({ user }: { user: CurrentUser }) {
                 </li>
               )
             })}
-            <li className="mt-1 border-t border-border pt-2">
-              <button
-                type="button"
-                className="flex w-full items-center gap-2 rounded-lg px-3 py-3 text-sm font-semibold text-navy transition-colors hover:bg-muted"
-              >
-                <LogOut className="size-4" />
-                Logout
-              </button>
-            </li>
+            {logoutHref ? (
+              <li className="mt-1 border-t border-border pt-2">
+                <a
+                  href={logoutHref}
+                  className="flex w-full items-center gap-2 rounded-lg px-3 py-3 text-sm font-semibold text-navy transition-colors hover:bg-muted"
+                >
+                  <LogOut className="size-4" />
+                  Logout
+                </a>
+              </li>
+            ) : null}
           </ul>
         </nav>
       ) : null}

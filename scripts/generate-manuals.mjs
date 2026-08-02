@@ -498,7 +498,7 @@ function buildItGuide() {
   c.push(h1("1. Overview"))
   c.push(
     p(
-      "The CNS HIAA Airport KPI Dashboard is a Next.js (App Router) application deployed on Vercel. It reads 21 KPI workbooks (KPI-01 … KPI-21) from SharePoint (or bundled local fallbacks), computes each KPI and an overall portfolio status server-side, and renders responsive dashboards, an executive summary, printable reports, and a notification system backed by Neon Postgres.",
+      "The CNS HIAA Airport KPI Dashboard is a Next.js (App Router) application. It reads 21 KPI workbooks (KPI-01 … KPI-21) from SharePoint (or bundled local fallbacks), computes each KPI and an overall portfolio status server-side, and renders responsive dashboards, an executive summary, printable reports, and a notification system backed by Azure Database for PostgreSQL Flexible Server.",
     ),
   )
   c.push(
@@ -517,7 +517,7 @@ function buildItGuide() {
         ["Data source", "Microsoft SharePoint document library via Microsoft Graph (app-only)"],
         ["Spreadsheet parsing", "SheetJS (xlsx) — server-side only"],
         ["Charts / visualization", "Recharts via shadcn/ui chart components"],
-        ["Notifications database", "Neon Postgres with Drizzle ORM"],
+        ["Notifications database", "Azure Database for PostgreSQL Flexible Server (Canada East) with Drizzle ORM"],
         ["Identity", "Pluggable provider (dev identity now; Microsoft Entra ID / MSAL ready)"],
       ],
       [2800, 6600],
@@ -593,8 +593,11 @@ function buildItGuide() {
     table(
       ["Variable", "Purpose"],
       [
-        ["DATABASE_URL", "Neon Postgres connection string (auto-provisioned by the Neon integration)."],
-        ["NOTIFY_DEV_USER_ID / _EMAIL / _NAME / _ROLE", "Dev identity until Entra sign-in is wired in."],
+        ["DATABASE_URL", "Azure Database for PostgreSQL Flexible Server connection string (TLS required)."],
+        ["AZURE_PG_USE_ENTRA", "true to authenticate via Microsoft Entra ID managed-identity tokens instead of a password."],
+        ["AZURE_PG_SSL_CA", "Optional CA bundle (PEM or file path) for verify-full TLS; blank uses Node's trust store."],
+        ["AUTH_REQUIRE_ENTRA", "true in production to force Entra sign-in (proxy redirects unauthenticated page requests)."],
+        ["NOTIFY_DEV_USER_ID / _EMAIL / _NAME / _ROLE", "Local dev fallback identity, used only when no Easy Auth principal is present."],
         ["NOTIFY_EVALUATE_SECRET", "Shared secret to POST /api/notifications/evaluate (scheduler / webhook)."],
         ["NOTIFY_EMAIL_ENABLED", "Feature flag for Outlook email delivery (default false)."],
         ["NOTIFY_TEAMS_ENABLED", "Feature flag for Microsoft Teams delivery (default false)."],
@@ -602,6 +605,21 @@ function buildItGuide() {
       [3800, 5600],
     ),
   )
+  c.push(h2("3.4 Provisioning the Azure PostgreSQL database"))
+  c.push(p("Create an Azure Database for PostgreSQL Flexible Server in Canada East (same region as the App Service) with TLS enforced, then create a database (e.g. \"kpi\") and provision the tables. The app connects with the standard pg driver — no Azure-specific driver is required."))
+  c.push(bullet("Provision the schema with the bundled DDL: psql \"host=<server>.postgres.database.azure.com port=5432 dbname=kpi user=dbadmin sslmode=require\" -f scripts/db/schema.sql (idempotent, safe to re-run)."))
+  c.push(bullet("Password auth: put the credentials in DATABASE_URL with ?sslmode=require."))
+  c.push(bullet("Entra ID auth (recommended for production): set AZURE_PG_USE_ENTRA=true and omit the password; the App Service managed identity mints a short-lived token per connection. Grant the identity a PostgreSQL role via Microsoft Entra admin."))
+  c.push(bullet("Data residency: keeping the server in Canada East co-locates the data with the app and satisfies the in-region requirement."))
+
+  c.push(h2("3.5 Authentication and access control (Microsoft Entra ID)"))
+  c.push(p("Sign-in is handled by Azure App Service Authentication (\"Easy Auth\"), which validates the Entra ID login before the request reaches the app and injects the signed-in principal as request headers. The app reads that principal in lib/auth/easy-auth.ts — it never handles passwords, tokens, or client secrets."))
+  c.push(bullet("Enable: on the App Service, turn on Authentication, add the Microsoft identity provider, and set unauthenticated requests to require login. Set AUTH_REQUIRE_ENTRA=true so the app's proxy also redirects any unauthenticated page request to Entra."))
+  c.push(bullet("Roles: define three App Roles on the Entra app registration — Admin, Manager, Viewer — and assign users or security groups to them. The app maps any role containing \"admin\" to admin, \"manager\" to manager, and everything else to viewer; the highest role wins."))
+  c.push(bullet("Role of record: on each sign-in the user's role from Entra is synced to app_user, so directory changes take effect on next login. Identity is keyed by the Entra object id (oid)."))
+  c.push(bullet("What roles gate: every authenticated user can view all 21 KPIs and manage their own subscriptions. Manager and Admin can additionally run evaluations (\"Check now\"); Admin is reserved for assignment and audit review (Phase 5)."))
+  c.push(bullet("Local dev / preview: with no Easy Auth in front of the app, it falls back to the NOTIFY_DEV_USER_* identity so the UI stays fully functional. This fallback is never used once a real Entra user is signed in."))
+  c.push(bullet("Sign-out: the profile menu links to /.auth/logout, App Service's Easy Auth logout endpoint."))
 
   c.push(pageBreak())
   c.push(h1("4. Notification system"))
@@ -610,7 +628,7 @@ function buildItGuide() {
   c.push(bullet("Severity mapping: KPI red → critical, amber → warning, unavailable → warning, recovery → info; portfolio red/orange → critical, yellow → warning."))
   c.push(bullet("Deduplication: a stable fingerprint (scope | kpi | status | reporting month) prevents duplicate alerts on re-runs."))
   c.push(bullet("Fan-out: each event creates one delivery per matching subscription and enabled channel; dashboard deliveries are immediate."))
-  c.push(h2("4.2 Database tables (Neon / Drizzle)"))
+  c.push(h2("4.2 Database tables (Azure PostgreSQL / Drizzle)"))
   c.push(
     table(
       ["Table", "Contents"],
@@ -661,7 +679,7 @@ function buildItGuide() {
   )
   c.push(bullet("Layout: header collapses to a menu button below the md breakpoint; KPI grids and charts reflow to a single column."))
   c.push(bullet("Charts use responsive containers, so visualizations scale to the viewport."))
-  c.push(bullet("Preferences are stored per user (Neon), so they follow the account across devices."))
+  c.push(bullet("Preferences are stored per user (Azure PostgreSQL), so they follow the account across devices."))
 
   c.push(pageBreak())
   c.push(h1("7. Security & operations"))
@@ -672,7 +690,7 @@ function buildItGuide() {
   c.push(bullet("Recommended response headers: X-Content-Type-Options, Referrer-Policy, HSTS, and a tightened CSP for the deployed app."))
   c.push(h2("7.1 Health & monitoring"))
   c.push(bullet("GET /api/health for a basic liveness check; ?deep=1 (with REVALIDATE_SECRET) exercises the data path."))
-  c.push(bullet("Watch Vercel logs and Neon metrics; alert on evaluation endpoint failures and Graph download errors."))
+  c.push(bullet("Watch application logs and Azure PostgreSQL metrics (Azure Monitor); alert on evaluation endpoint failures and Graph download errors."))
 
   c.push(h1("8. Key paths reference"))
   c.push(
@@ -685,7 +703,7 @@ function buildItGuide() {
         ["lib/kpi-NN/", "Per-KPI calculation + dashboard data."],
         ["lib/executive-summary/", "Adapters + portfolio aggregate."],
         ["lib/notifications/", "Evaluate engine, transports, identity, queries."],
-        ["lib/db/", "Neon client + Drizzle schema."],
+        ["lib/db/", "Azure PostgreSQL client (pg + optional Entra auth) + Drizzle schema."],
         ["app/notifications/, app/help/", "Notification centre and manuals download page."],
         ["app/api/notifications/evaluate/", "Secret-protected evaluation trigger."],
       ],
@@ -696,20 +714,277 @@ function buildItGuide() {
   return new Document(docShell("CNS HIAA KPI Dashboard — IT & Technical Guide", c))
 }
 
+// ============================================================================
+// DOCUMENT 3 — DESIGN & AZURE PRODUCTION DEPLOYMENT GUIDE
+// ============================================================================
+function buildDesignAndAzureGuide() {
+  const c = []
+  c.push(
+    ...coverPage(
+      "Design & Azure Deployment",
+      "Architecture, design system, and production setup",
+      "For solution architects and Azure administrators",
+      NAVY,
+    ),
+  )
+
+  // ---- Part A: Design ------------------------------------------------------
+  c.push(h1("Part A — Design"))
+  c.push(
+    p(
+      "This document has two parts. Part A describes how the application is designed — its architecture, data flow, and visual design system. Part B is a step-by-step guide to deploying it to Microsoft Azure for production, including Azure Database for PostgreSQL Flexible Server, Microsoft Entra ID sign-in, role-based access control (RBAC), and scheduled evaluation with Power Automate.",
+    ),
+  )
+
+  c.push(h2("A1. Architecture overview"))
+  c.push(
+    p(
+      "The dashboard is a Next.js (App Router) application rendered mostly on the server. KPI values are computed on the server from source spreadsheets and streamed to the browser as HTML, so no business logic or credentials live on the client. Persistent state for the notification system lives in PostgreSQL.",
+    ),
+  )
+  c.push(
+    table(
+      ["Layer", "Technology", "Responsibility"],
+      [
+        ["Presentation", "Next.js RSC + Tailwind CSS", "Server-rendered dashboards, executive summary, reports, notification centre."],
+        ["Application", "Next.js server actions + route handlers", "KPI computation, evaluation engine, RBAC enforcement."],
+        ["Data source", "SharePoint / Microsoft Graph", "21 KPI workbooks (KPI-01 … KPI-21) with local fallback."],
+        ["Persistence", "Azure Database for PostgreSQL Flexible Server", "Users, subscriptions, alert events, deliveries, audit log, status snapshots."],
+        ["Identity", "Microsoft Entra ID via App Service Easy Auth", "Authentication and App Role assignment."],
+        ["Hosting", "Azure App Service (Node.js)", "Runs the Next.js server in Canada East."],
+      ],
+      [2200, 3200, 4000],
+    ),
+  )
+
+  c.push(h2("A2. Data flow: spreadsheet to visualization"))
+  c.push(
+    p(
+      "Every KPI follows the same one-way pipeline. The workbook is the single source of record; the app never stores KPI numbers of its own.",
+    ),
+  )
+  c.push(step("Source workbook (KPI-NN.xlsx) is maintained in SharePoint."))
+  c.push(step("lib/sharepoint/workbook-source.ts downloads it via Microsoft Graph (or uses the bundled local fallback) and caches it."))
+  c.push(step("lib/xlsx-loader.ts parses the workbook with SheetJS; lib/kpi-data/get-rows.ts turns the relevant sheet into typed rows."))
+  c.push(step("lib/kpi-NN/ computes that KPI's status, counts, and damage points."))
+  c.push(step("lib/executive-summary/ aggregates all 21 KPIs into the portfolio status."))
+  c.push(step("The page renders charts and tables from that computed data; the notification engine compares it against the last snapshot."))
+  c.push(
+    callout(
+      "Why this matters for deployment",
+      "Because all 21 KPIs share this pipeline, the only data dependencies to configure in Azure are (a) access to the SharePoint workbooks via Graph and (b) the PostgreSQL connection. There is no separate ETL job to run.",
+    ),
+  )
+
+  c.push(pageBreak())
+  c.push(h2("A3. Visual design system"))
+  c.push(
+    p(
+      "The interface uses a small, deliberately constrained design system so the dashboard reads as a single professional product across every device.",
+    ),
+  )
+  c.push(h3("Color"))
+  c.push(bullet("Navy (#1F2A44) — primary brand and text color used for headers, primary buttons, and emphasis."))
+  c.push(bullet("Aviation blue (#2563EB) — accent for links, active navigation, and highlights."))
+  c.push(bullet("Neutrals — white, light greys, and borders for surfaces and separation."))
+  c.push(bullet("Status semantics — green (on target), amber (warning), red (critical), applied identically in dashboards and notifications so the two always agree."))
+  c.push(h3("Typography"))
+  c.push(bullet("A single sans-serif family (Geist) across headings and body, differentiated by weight and size rather than multiple typefaces."))
+  c.push(bullet("Generous line height for readable, report-style density."))
+  c.push(h3("Layout & responsiveness"))
+  c.push(bullet("Mobile-first, flexbox-based layouts that reflow from a multi-column desktop grid to a single column on phones."))
+  c.push(bullet("The top navigation collapses to a hamburger menu below the medium breakpoint; the same features are reachable on PC, Mac, iPhone, and Android."))
+  c.push(bullet("A dedicated print stylesheet produces clean contract/management reports."))
+  c.push(
+    table(
+      ["Design token", "Value", "Usage"],
+      [
+        ["--navy", "#1F2A44", "Primary text, headers, primary buttons."],
+        ["--aviation", "#2563EB", "Links, active nav, accents."],
+        ["Status: on-target", "Green", "KPI meeting target."],
+        ["Status: warning", "Amber", "Attention needed."],
+        ["Status: critical", "Red", "Target missed / damage incurred."],
+      ],
+      [2600, 2200, 4600],
+    ),
+  )
+
+  // ---- Part B: Azure deployment -------------------------------------------
+  c.push(pageBreak())
+  c.push(h1("Part B — Azure production deployment"))
+  c.push(
+    p(
+      "This part walks through a production deployment on Microsoft Azure, in order. Deploy all resources in the same region (Canada East is recommended) to keep data in-region and minimize latency. You will need an Azure subscription with permission to create resources and a Microsoft Entra ID administrator to register the application and assign roles.",
+    ),
+  )
+  c.push(
+    table(
+      ["Azure resource", "Purpose"],
+      [
+        ["Resource group", "Container for all resources below (e.g. rg-cns-hiaa-kpi)."],
+        ["Azure Database for PostgreSQL Flexible Server", "Notification database."],
+        ["Azure App Service (Linux, Node)", "Hosts the Next.js application."],
+        ["Microsoft Entra ID app registration", "Sign-in and App Roles (RBAC)."],
+        ["Power Automate (or Logic Apps)", "Scheduled evaluation trigger."],
+      ],
+      [4600, 4800],
+    ),
+  )
+
+  c.push(h2("B1. Provision Azure Database for PostgreSQL Flexible Server"))
+  c.push(step("In the Azure portal, create a resource: Azure Database for PostgreSQL Flexible Server, in your resource group and in Canada East."))
+  c.push(step("Choose a workload-appropriate compute tier (Burstable B1ms is enough to start; scale up later). Enable high availability if required by the contract."))
+  c.push(step("Set an administrator login and strong password, or plan to use Microsoft Entra authentication (recommended — see B4)."))
+  c.push(step("Under Networking, require SSL/TLS. Add a firewall rule allowing Azure services, and add the App Service outbound IPs (or use a private endpoint / VNet integration for stricter isolation)."))
+  c.push(step("After creation, create a database named kpi."))
+  c.push(step("Provision the schema using the bundled, idempotent DDL script (safe to re-run):"))
+  c.push(code('psql "host=<server>.postgres.database.azure.com port=5432 dbname=kpi user=<admin> sslmode=require" -f scripts/db/schema.sql'))
+  c.push(
+    callout(
+      "Schema is version-controlled",
+      "scripts/db/schema.sql creates all six tables (app_user, subscription, alert_event, delivery, audit_log, kpi_status_snapshot) and their indexes. It was validated to match the application's Drizzle schema exactly, so there is no schema drift between code and database.",
+    ),
+  )
+
+  c.push(pageBreak())
+  c.push(h2("B2. Deploy the application to Azure App Service"))
+  c.push(step("Create an Azure App Service (Linux) with a Node.js runtime, in the same resource group and region."))
+  c.push(step("Configure the build/start commands for the Next.js app (build with your package manager, then start the production server)."))
+  c.push(step("Deploy the code via GitHub Actions, Azure DevOps, or az webapp deploy — whichever your team standardizes on."))
+  c.push(step("Add the application settings (environment variables) listed in B6, including DATABASE_URL pointing at the server from B1."))
+  c.push(step("Browse to the App Service URL and confirm the dashboards render and read live KPI data before enabling authentication."))
+
+  c.push(h2("B3. Configure Microsoft Entra ID sign-in (App Service Easy Auth)"))
+  c.push(
+    p(
+      "Authentication is handled by Azure App Service Authentication (\"Easy Auth\"). It validates the Entra ID login before the request reaches the app and injects the signed-in principal as request headers, which the app reads in lib/auth/easy-auth.ts. No client secrets or tokens are stored in application code.",
+    ),
+  )
+  c.push(step("In Microsoft Entra ID, register an application (or let App Service create one during the next step)."))
+  c.push(step("On the App Service, open Authentication, Add identity provider, and choose Microsoft."))
+  c.push(step("Point it at the Entra app registration and set Restrict access to Require authentication so unauthenticated requests are redirected to sign in."))
+  c.push(step("Set the app setting AUTH_REQUIRE_ENTRA=true so the application's own proxy also redirects unauthenticated page requests (defense in depth)."))
+  c.push(step("Confirm sign-in: browse to the site, authenticate with an organizational account, and verify the Profile tab shows \"Microsoft Entra ID\" as the sign-in method."))
+  c.push(
+    callout(
+      "Local vs. production",
+      "With no Easy Auth in front of the app (local development or preview), the app falls back to the NOTIFY_DEV_USER_* identity so the UI stays usable. That fallback is never used once a real Entra user is signed in.",
+    ),
+  )
+
+  c.push(pageBreak())
+  c.push(h2("B4. Role-based access control (RBAC) with Entra App Roles"))
+  c.push(
+    p(
+      "Access levels are driven by Microsoft Entra App Roles. The application maps each user's assigned role to one of three internal roles and enforces it on the server; the highest matching role wins.",
+    ),
+  )
+  c.push(step("In the Entra app registration, open App roles and create three roles."))
+  c.push(
+    table(
+      ["Display name", "Value (suggested)", "Maps to", "Can do"],
+      [
+        ["Administrator", "KPI.Admin", "admin", "Everything, including assignment and audit review."],
+        ["Manager", "KPI.Manager", "manager", "View all KPIs, manage own subscriptions, run evaluations."],
+        ["Viewer", "KPI.Viewer", "viewer", "View all KPIs and manage own subscriptions."],
+      ],
+      [2200, 2200, 1500, 3600],
+    ),
+  )
+  c.push(spacer())
+  c.push(step("Under Enterprise applications, open the app, go to Users and groups, and assign users (or security groups) to the appropriate role."))
+  c.push(step("The app maps any role name containing \"admin\" to admin, \"manager\" to manager, and everything else to viewer. On each sign-in the resolved role is synced to the app_user table, so directory changes take effect on the user's next login."))
+  c.push(
+    callout(
+      "How enforcement works",
+      "Privileged actions (for example, running an evaluation) call requireRole() on the server and return 403 if the user is below the required level; the UI also hides controls the user cannot use. Identity is keyed by the Entra object id (oid), so it is stable across email or name changes.",
+    ),
+  )
+
+  c.push(pageBreak())
+  c.push(h2("B5. Scheduled evaluation with Power Automate"))
+  c.push(
+    p(
+      "KPI statuses are evaluated by calling a secret-protected endpoint. In production, schedule that call with Power Automate (or Azure Logic Apps) so alerts are generated automatically instead of relying on the manual \"Check now\" button.",
+    ),
+  )
+  c.push(runs([
+    new TextRun({ text: "Endpoint: ", bold: true, size: 21, color: "222933" }),
+    new TextRun({ text: "POST https://<your-app>.azurewebsites.net/api/notifications/evaluate", font: "Consolas", size: 18, color: "1B2430" }),
+  ]))
+  c.push(runs([
+    new TextRun({ text: "Auth: ", bold: true, size: 21, color: "222933" }),
+    new TextRun({ text: "header x-cron-secret: <NOTIFICATIONS_CRON_SECRET>", font: "Consolas", size: 18, color: "1B2430" }),
+  ]))
+  c.push(spacer())
+  c.push(step("In Power Automate, create a Scheduled cloud flow. Set the recurrence (for example, daily on business days at the reporting deadline time)."))
+  c.push(step("Add an HTTP action: Method POST, URI set to the evaluate endpoint above."))
+  c.push(step("Add a header x-cron-secret whose value is the same secret configured in the App Service setting NOTIFICATIONS_CRON_SECRET."))
+  c.push(step("Save and run the flow once. A 200 response with an event summary confirms it works; the notification inbox will show any new alerts."))
+  c.push(step("Optional: add a second scheduled flow for the weekly reminder cadence."))
+  c.push(
+    callout(
+      "Baseline behaviour",
+      "The very first evaluation records a silent baseline snapshot and does not raise historical alerts, so enabling the schedule will not flood users. Subsequent runs only alert on genuine status transitions and are de-duplicated per month.",
+    ),
+  )
+  c.push(
+    callout(
+      "Logic Apps alternative",
+      "If your organization standardizes on Azure Logic Apps, use a Recurrence trigger plus an HTTP action with the same URI and x-cron-secret header — the configuration is identical.",
+    ),
+  )
+
+  c.push(pageBreak())
+  c.push(h2("B6. Environment variables (App Service application settings)"))
+  c.push(
+    table(
+      ["Setting", "Purpose"],
+      [
+        ["DATABASE_URL", "PostgreSQL connection string (…postgres.database.azure.com…?sslmode=require)."],
+        ["AZURE_PG_USE_ENTRA", "true to authenticate to PostgreSQL with a managed-identity token instead of a password."],
+        ["AZURE_PG_SSL_CA", "Optional CA bundle (PEM or file path) for verify-full TLS; blank uses Node's trust store."],
+        ["AUTH_REQUIRE_ENTRA", "true in production to force Entra sign-in."],
+        ["NOTIFICATIONS_CRON_SECRET", "Shared secret required by the evaluate endpoint (used by Power Automate)."],
+        ["NOTIFICATIONS_EMAIL_ENABLED", "Turn on Microsoft Graph email delivery (Phase 4)."],
+        ["NOTIFICATIONS_TEAMS_ENABLED", "Turn on Microsoft Teams delivery (Phase 4)."],
+        ["KPI_DEFAULT_TIMEZONE", "Reporting timezone (America/Halifax)."],
+        ["NOTIFY_DEV_USER_*", "Local dev fallback identity only; ignored once Entra sign-in is active."],
+      ],
+      [4200, 5200],
+    ),
+  )
+
+  c.push(h2("B7. Go-live checklist"))
+  c.push(step("PostgreSQL Flexible Server provisioned in Canada East with TLS required; schema.sql applied."))
+  c.push(step("App Service deployed and reading live KPI data from SharePoint via Graph."))
+  c.push(step("Easy Auth enabled with the Microsoft provider; AUTH_REQUIRE_ENTRA=true."))
+  c.push(step("Three App Roles created and assigned to users or groups; role sync verified on the Profile tab."))
+  c.push(step("Power Automate flow scheduled and returning 200 from the evaluate endpoint."))
+  c.push(step("A test status change produces a dashboard alert; email/Teams enabled if in scope."))
+  c.push(step("Data residency, backup, and high-availability settings confirmed against contract requirements."))
+
+  return new Document(docShell("CNS HIAA KPI Dashboard — Design & Azure Deployment Guide", c))
+}
+
 // ---- write -----------------------------------------------------------------
 async function main() {
   fs.mkdirSync(OUT_DIR, { recursive: true })
   const userDoc = buildUserGuide()
   const itDoc = buildItGuide()
+  const designDoc = buildDesignAndAzureGuide()
 
   const userPath = path.join(OUT_DIR, "CNS-HIAA-KPI-Dashboard-User-Guide.docx")
   const itPath = path.join(OUT_DIR, "CNS-HIAA-KPI-Dashboard-IT-Technical-Guide.docx")
+  const designPath = path.join(OUT_DIR, "CNS-HIAA-KPI-Dashboard-Design-and-Azure-Deployment-Guide.docx")
 
   fs.writeFileSync(userPath, await Packer.toBuffer(userDoc))
   fs.writeFileSync(itPath, await Packer.toBuffer(itDoc))
+  fs.writeFileSync(designPath, await Packer.toBuffer(designDoc))
 
   console.log("[manuals] wrote", path.relative(ROOT, userPath), `(${fs.statSync(userPath).size} bytes)`)
   console.log("[manuals] wrote", path.relative(ROOT, itPath), `(${fs.statSync(itPath).size} bytes)`)
+  console.log("[manuals] wrote", path.relative(ROOT, designPath), `(${fs.statSync(designPath).size} bytes)`)
 }
 
 main().catch((err) => {

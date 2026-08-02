@@ -10,6 +10,7 @@ import {
 } from "@/lib/notifications/subscriptions"
 import { evaluateAndDispatch } from "@/lib/notifications/evaluate"
 import { writeAudit } from "@/lib/notifications/audit"
+import { AuthorizationError, requireRole } from "@/lib/notifications/rbac"
 import type { InboxItem, Severity } from "@/lib/notifications/types"
 
 export async function fetchInbox(): Promise<{ items: InboxItem[]; unread: number }> {
@@ -78,11 +79,15 @@ export async function runEvaluationNow(): Promise<{
   error?: string
 }> {
   try {
-    const user = await getCurrentUser()
+    // Running a portfolio-wide evaluation is a privileged action (manager+).
+    const user = await requireRole("manager")
     const result = await evaluateAndDispatch(user.id)
     revalidatePath("/notifications")
     return result
   } catch (err) {
+    if (err instanceof AuthorizationError) {
+      return { skipped: true, eventsCreated: 0, error: "You need a Manager or Administrator role to run an evaluation." }
+    }
     const cause = err instanceof Error && "cause" in err ? (err as { cause?: unknown }).cause : undefined
     const message = `${err instanceof Error ? err.message : String(err)}${
       cause ? ` | cause: ${cause instanceof Error ? cause.message : String(cause)}` : ""

@@ -5,7 +5,7 @@ import { RefreshCw } from "lucide-react"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Button } from "@/components/ui/button"
 import { runEvaluationNow } from "@/app/actions/notifications"
-import type { CurrentUser, InboxItem, Severity } from "@/lib/notifications/types"
+import { hasRole, type CurrentUser, type InboxItem, type Severity } from "@/lib/notifications/types"
 import { InboxPanel } from "./inbox-panel"
 import { SubscriptionsPanel, type KpiPref, type ChannelPref } from "./subscriptions-panel"
 import { ProfilePanel } from "./profile-panel"
@@ -23,6 +23,7 @@ export function NotificationsView({
 }) {
   const [checkResult, setCheckResult] = useState<string | null>(null)
   const [pending, startTransition] = useTransition()
+  const canRunEvaluation = hasRole(user.role, "manager")
 
   function handleCheckNow() {
     setCheckResult(null)
@@ -51,13 +52,15 @@ export function NotificationsView({
             Review KPI alerts, choose which KPIs you follow, and set how you want to be notified when a status changes.
           </p>
         </div>
-        <div className="flex flex-col items-start gap-2 sm:items-end">
-          <Button onClick={handleCheckNow} disabled={pending} className="gap-2">
-            <RefreshCw className={pending ? "size-4 animate-spin" : "size-4"} />
-            {pending ? "Checking…" : "Check now"}
-          </Button>
-          {checkResult ? <p className="text-xs text-muted-foreground">{checkResult}</p> : null}
-        </div>
+        {canRunEvaluation ? (
+          <div className="flex flex-col items-start gap-2 sm:items-end">
+            <Button onClick={handleCheckNow} disabled={pending} className="gap-2">
+              <RefreshCw className={pending ? "size-4 animate-spin" : "size-4"} />
+              {pending ? "Checking…" : "Check now"}
+            </Button>
+            {checkResult ? <p className="text-xs text-muted-foreground">{checkResult}</p> : null}
+          </div>
+        ) : null}
       </div>
 
       <Tabs defaultValue="inbox" className="mt-6">

@@ -17,6 +17,7 @@ const ROLE_DESCRIPTIONS: Record<string, string> = {
 }
 
 export function ProfilePanel({ user }: { user: CurrentUser }) {
+  const isEntra = user.authSource === "entra"
   const initials = user.displayName
     .split(" ")
     .map((p) => p[0])
@@ -50,15 +51,34 @@ export function ProfilePanel({ user }: { user: CurrentUser }) {
             <dt className="text-muted-foreground">Permissions</dt>
             <dd className="mt-1 text-foreground">{ROLE_DESCRIPTIONS[user.role] ?? "Standard access."}</dd>
           </div>
+          <div className="flex items-center justify-between py-3">
+            <dt className="text-muted-foreground">Sign-in method</dt>
+            <dd className="font-medium text-foreground">
+              {isEntra ? "Microsoft Entra ID" : "Dev identity (local)"}
+            </dd>
+          </div>
+          {isEntra && user.appRoles && user.appRoles.length > 0 ? (
+            <div className="flex items-center justify-between gap-4 py-3">
+              <dt className="text-muted-foreground">Directory app roles</dt>
+              <dd className="flex flex-wrap justify-end gap-1">
+                {user.appRoles.map((r) => (
+                  <Badge key={r} variant="outline" className="font-normal">
+                    {r}
+                  </Badge>
+                ))}
+              </dd>
+            </div>
+          ) : null}
           <div className="flex justify-between py-3">
-            <dt className="text-muted-foreground">Directory ID</dt>
+            <dt className="text-muted-foreground">{isEntra ? "Entra object ID" : "Directory ID"}</dt>
             <dd className="font-mono text-xs text-foreground">{user.id}</dd>
           </div>
         </dl>
 
         <p className="mt-4 rounded-md bg-muted/50 p-3 text-xs leading-relaxed text-muted-foreground">
-          Identity is currently resolved through a pluggable provider. When Microsoft Entra ID sign-in is enabled, this
-          profile will populate automatically from your directory account and role assignment.
+          {isEntra
+            ? "You are signed in with Microsoft Entra ID via Azure App Service authentication. Your role is assigned through Entra App Roles and syncs automatically on each sign-in."
+            : "Running with the local dev identity because Microsoft Entra sign-in is not in front of the app here. On Azure App Service with Easy Auth enabled, this profile populates automatically from your directory account and App Role assignment."}
         </p>
       </Card>
     </div>

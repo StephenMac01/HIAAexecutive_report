@@ -1,0 +1,135 @@
+[1mdiff --git a/.github/workflows/azure-webapps-node.yml b/.github/workflows/azure-webapps-node.yml[m
+[1mindex 85d5800..02eb0db 100644[m
+[1m--- a/.github/workflows/azure-webapps-node.yml[m
+[1m+++ b/.github/workflows/azure-webapps-node.yml[m
+[36m@@ -45,6 +45,7 @@[m [mjobs:[m
+         run: pnpm build[m
+ [m
+       - name: Prepare standalone application[m
+[32m+[m[32m        shell: bash[m
+         run: |[m
+           set -euxo pipefail[m
+ [m
+[36m@@ -64,8 +65,9 @@[m [mjobs:[m
+           fi[m
+ [m
+           echo "Locating complete SWC helpers package"[m
+[31m-          SWC_HELPER_FILE="$(node -p "require.resolve('@swc/helpers/esm/_interop_require_default.js')")"[m
+[31m-          SWC_HELPERS_DIR="$(dirname "$(dirname "$SWC_HELPER_FILE")")"[m
+[32m+[m
+[32m+[m[32m          SWC_HELPER_FILE=$(node -p "require.resolve('@swc/helpers/esm/_interop_require_default.js')")[m
+[32m+[m[32m          SWC_HELPERS_DIR=$(dirname "$(dirname "$SWC_HELPER_FILE")")[m
+ [m
+           echo "SWC helper file: $SWC_HELPER_FILE"[m
+           echo "SWC helpers directory: $SWC_HELPERS_DIR"[m
+[36m@@ -75,10 +77,10 @@[m [mjobs:[m
+           mkdir -p deploy/node_modules/@swc[m
+           cp -aL "$SWC_HELPERS_DIR" deploy/node_modules/@swc/helpers[m
+ [m
+[31m-                    echo "Copying @next/env"[m
+[32m+[m[32m          echo "Copying @next/env"[m
+ [m
+[31m-          NEXT_ENV_PACKAGE="$(node -p "require.resolve('@next/env/package.json')")"[m
+[31m-          NEXT_ENV_DIR="$(dirname "$NEXT_ENV_PACKAGE")"[m
+[32m+[m[32m          NEXT_ENV_PACKAGE=$(node -p "require.resolve('@next/env/package.json')")[m
+[32m+[m[32m          NEXT_ENV_DIR=$(dirname "$NEXT_ENV_PACKAGE")[m
+ [m
+           echo "@next/env directory: $NEXT_ENV_DIR"[m
+ [m
+[36m@@ -86,45 +88,38 @@[m [mjobs:[m
+           mkdir -p deploy/node_modules/@next[m
+           cp -aL "$NEXT_ENV_DIR" deploy/node_modules/@next/env[m
+ [m
+[31m-          echo "Checking standalone package"[m
+[31m-[m
+[31m-                    echo "Checking standalone package"[m
+[31m-[m
+[31m-          for file in \[m
+[31m-            deploy/server.js \[m
+[31m-            deploy/node_modules/next/package.json \[m
+[31m-            deploy/node_modules/react/package.json \[m
+[31m-            deploy/node_modules/react-dom/package.json \[m
+[31m-            deploy/node_modules/@swc/helpers/package.json \[m
+[31m-            deploy/node_modules/@swc/helpers/esm/_interop_require_default.js \[m
+[31m-            deploy/node_modules/@next/env/package.json[m
+[31m-          do[m
+[31m-            if [ -f "$file" ]; then[m
+[31m-              echo "FOUND: $file"[m
+[31m-            else[m
+[31m-              echo "MISSING: $file"[m
+[31m-              exit 1[m
+[31m-            fi[m
+[31m-          done[m
+[31m-          echo "Testing packaged server dependency resolution"[m
+[31m-          ([m
+[31m-            cd deploy[m
+[31m-            node -e "require.resolve('next')"[m
+[31m-            node -e "require.resolve('@swc/helpers/esm/_interop_require_default.js')"[m
+[31m-            node -e "require.resolve('@next/env')"[m
+[31m-          )[m
+[31m-[m
+[31m-          echo "Creating deployment ZIP"[m
+[31m-          ([m
+[31m-            cd deploy[m
+[31m-            zip -qr ../node-app.zip .[m
+[31m-          )[m
+[31m-[m
+[31m-          echo "Checking ZIP package"[m
+[31m-          unzip -l node-app.zip | grep "server.js"[m
+[31m-          unzip -l node-app.zip | grep "node_modules/next/package.json"[m
+[31m-          unzip -l node-app.zip | grep "node_modules/@swc/helpers/esm/_interop_require_default.js"[m
+[31m-          unzip -l node-app.zip | grep "node_modules/@next/env/package.json"[m
+[32m+[m[32m          echo "Copying PostgreSQL runtime packages"[m
+[32m+[m
+[32m+[m[32m          PG_PACKAGE=$(node -p "require.resolve('pg/package.json')")[m
+[32m+[m[32m          PG_DIR=$(dirname "$PG_PACKAGE")[m
+[32m+[m
+[32m+[m[32m          PG_TYPES_PACKAGE=$(node -p "require.resolve('pg-types/package.json')")[m
+[32m+[m[32m          PG_TYPES_DIR=$(dirname "$PG_TYPES_PACKAGE")[m
+[32m+[m
+[32m+[m[32m          echo "pg package directory: $PG_DIR"[m
+[32m+[m[32m          echo "pg-types package directory: $PG_TYPES_DIR"[m
+[32m+[m
+[32m+[m[32m          rm -rf deploy/node_modules/pg[m
+[32m+[m[32m          rm -rf deploy/node_modules/pg-types[m
+[32m+[m
+[32m+[m[32m          mkdir -p deploy/node_modules[m
+[32m+[m
+[32m+[m[32m          cp -aL "$PG_DIR" deploy/node_modules/pg[m
+[32m+[m[32m          cp -aL "$PG_TYPES_DIR" deploy/node_modules/pg-types[m
+[32m+[m
+[32m+[m[32m          echo "Verifying required runtime files"[m
+[32m+[m
+[32m+[m[32m          test -f deploy/server.js[m
+[32m+[m[32m          test -f deploy/node_modules/next/package.json[m
+[32m+[m[32m          test -f deploy/node_modules/@swc/helpers/esm/_interop_require_default.js[m
+[32m+[m[32m          test -f deploy/node_modules/@next/env/package.json[m
+[32m+[m[32m          test -f deploy/node_modules/pg/package.json[m
+[32m+[m[32m          test -f deploy/node_modules/pg-types/package.json[m
+[32m+[m
+[32m+[m[32m          echo "Creating deployment archive"[m
+[32m+[m
+[32m+[m[32m          cd deploy[m
+[32m+[m[32m          zip -r ../node-app.zip .[m
+ [m
+       - name: Upload deployment artifact[m
+         uses: actions/upload-artifact@v4[m
+[36m@@ -148,11 +143,18 @@[m [mjobs:[m
+           path: artifact[m
+ [m
+       - name: Verify downloaded artifact[m
+[32m+[m[32m        shell: bash[m
+         run: |[m
+[32m+[m[32m          set -euxo pipefail[m
+[32m+[m
+           test -f artifact/node-app.zip[m
+[32m+[m
+           unzip -l artifact/node-app.zip | grep "server.js"[m
+           unzip -l artifact/node-app.zip | grep "node_modules/next/package.json"[m
+           unzip -l artifact/node-app.zip | grep "node_modules/@swc/helpers/esm/_interop_require_default.js"[m
+[32m+[m[32m          unzip -l artifact/node-app.zip | grep "node_modules/@next/env/package.json"[m
+[32m+[m[32m          unzip -l artifact/node-app.zip | grep "node_modules/pg/package.json"[m
+[32m+[m[32m          unzip -l artifact/node-app.zip | grep "node_modules/pg-types/package.json"[m
+ [m
+       - name: Deploy to Azure Web App[m
+         uses: azure/webapps-deploy@v3[m

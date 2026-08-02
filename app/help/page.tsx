@@ -1,11 +1,24 @@
 import type { Metadata } from "next"
 import Link from "next/link"
-import { BookOpen, Bell, Download, FileText, LayoutGrid, Settings, Smartphone, Users } from "lucide-react"
+import {
+  BookOpen,
+  Bell,
+  Cloud,
+  Database,
+  Download,
+  FileText,
+  LayoutGrid,
+  Palette,
+  Settings,
+  ShieldCheck,
+  Smartphone,
+  Users,
+} from "lucide-react"
 
 export const metadata: Metadata = {
   title: "Help & Manuals | CNS HIAA",
   description:
-    "Download the CNS HIAA Airport KPI Dashboard user guide and IT / technical guide. Works on PC, Mac, iPhone, and Android.",
+    "Download the CNS HIAA Airport KPI Dashboard user guide, IT / technical guide, and design & Azure deployment guide. Works on PC, Mac, iPhone, and Android.",
 }
 
 type Manual = {
@@ -52,6 +65,22 @@ const MANUALS: Manual[] = [
       { icon: Smartphone, text: "Cross-platform delivery & security" },
     ],
   },
+  {
+    title: "Design & Azure Deployment Guide",
+    audience: "For architects and Azure administrators",
+    href: "/manuals/CNS-HIAA-KPI-Dashboard-Design-and-Azure-Deployment-Guide.docx",
+    fileLabel: "Word document (.docx)",
+    icon: Cloud,
+    accent: "aviation",
+    summary:
+      "The system architecture and visual design system, plus a step-by-step guide to deploying on Microsoft Azure — Azure Database for PostgreSQL Flexible Server, Microsoft Entra ID sign-in, role-based access control, and scheduled evaluation with Power Automate.",
+    contents: [
+      { icon: Palette, text: "Architecture & visual design system" },
+      { icon: Database, text: "Azure PostgreSQL Flexible Server setup" },
+      { icon: ShieldCheck, text: "Entra ID sign-in & RBAC roles" },
+      { icon: Cloud, text: "Power Automate scheduled evaluation" },
+    ],
+  },
 ]
 
 export default function HelpPage() {
@@ -69,7 +98,7 @@ export default function HelpPage() {
         </p>
       </div>
 
-      <div className="mt-8 grid gap-6 lg:grid-cols-2">
+      <div className="mt-8 grid gap-6 md:grid-cols-2 lg:grid-cols-3">
         {MANUALS.map((m) => (
           <ManualCard key={m.href} manual={m} />
         ))}
@@ -77,7 +106,7 @@ export default function HelpPage() {
 
       <section className="mt-8 rounded-xl border border-navy/15 bg-card p-5 sm:p-6">
         <h2 className="text-sm font-semibold text-navy">Which guide do I need?</h2>
-        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+        <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <div className="rounded-lg bg-muted/50 p-4">
             <p className="text-sm font-medium text-navy">Choose the User Guide if…</p>
             <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
@@ -88,6 +117,13 @@ export default function HelpPage() {
             <p className="text-sm font-medium text-navy">Choose the IT &amp; Technical Guide if…</p>
             <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
               you configure SharePoint data, environment variables, delivery channels, or operate the deployment.
+            </p>
+          </div>
+          <div className="rounded-lg bg-muted/50 p-4">
+            <p className="text-sm font-medium text-navy">Choose the Design &amp; Azure Deployment Guide if…</p>
+            <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
+              you are standing up the app on Azure — PostgreSQL Flexible Server, Entra ID sign-in, RBAC, and Power
+              Automate scheduling.
             </p>
           </div>
         </div>

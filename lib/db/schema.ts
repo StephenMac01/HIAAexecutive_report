@@ -3,10 +3,10 @@ import { boolean, index, jsonb, numeric, pgTable, text, timestamp, uniqueIndex }
 /**
  * Drizzle schema for the KPI notification system.
  *
- * Column names are snake_case to match the SQL provisioned via the Neon MCP.
- * No foreign-key constraints (per the Neon stack guidance) — relationships are
- * enforced in application code. This shape is intentionally close to a
- * relational Azure SQL model so it can be lifted later.
+ * Targets Azure Database for PostgreSQL Flexible Server (standard PostgreSQL).
+ * Column names are snake_case. Relationships are enforced in application code
+ * rather than with foreign-key constraints, keeping the shape close to a
+ * relational Azure SQL model so it can be lifted later if needed.
  */
 
 /** A person who can receive notifications. Keyed by a stable identity id. */
