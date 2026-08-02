@@ -264,9 +264,11 @@ jobs:
         run: |
           set -euo pipefail
 
-          KUDU_URL="https://${AZURE_WEBAPP_NAME}.scm.azurewebsites.net/api/publish?type=zip&clean=true&restart=true&ignorestack=true"
+          KUDU_HOST="hiaaexecutivereport-v2-bqcmdycyg7gthyf5.scm.canadaeast-01.azurewebsites.net"
+          KUDU_URL="https://${KUDU_HOST}/api/publish?type=zip&clean=true&restart=true&ignorestack=true"
 
           echo "Deploying tested ZIP package directly through Kudu"
+          echo "Kudu host: ${KUDU_HOST}"
 
           HTTP_STATUS=$(curl \
             --silent \
