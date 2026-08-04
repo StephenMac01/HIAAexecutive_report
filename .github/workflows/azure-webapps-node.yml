@@ -262,7 +262,7 @@ jobs:
     name: Deploy to Azure App Service
     runs-on: ubuntu-latest
     needs: build
-    timeout-minutes: 20
+    timeout-minutes: 35
 
     permissions:
       contents: none
@@ -412,25 +412,30 @@ jobs:
 
           echo "Azure deployment completed successfully."
 
-      - name: Wait for application startup
+      - name: Verify application startup
         shell: bash
         run: |
           set -euo pipefail
 
           APP_URL="https://hiaaexecutivereport-v2-bqcmdycyg7gthyf5.canadaeast-01.azurewebsites.net"
+          HEALTH_URL="${APP_URL}/api/health"
 
           echo "Waiting for the application to start..."
+          echo "Testing: ${HEALTH_URL}"
 
           for attempt in $(seq 1 24); do
+            RESPONSE_FILE="$(mktemp)"
+
             STATUS="$(
               curl \
                 --silent \
                 --show-error \
-                --connect-timeout 15 \
+                --location \
+                --connect-timeout 10 \
                 --max-time 30 \
-                --output health-response.txt \
+                --output "${RESPONSE_FILE}" \
                 --write-out "%{http_code}" \
-                "${APP_URL}/" || true
+                "${HEALTH_URL}" || true
             )"
 
             if [ -z "${STATUS}" ]; then
@@ -440,19 +445,77 @@ jobs:
             echo "Attempt ${attempt}: HTTP ${STATUS}"
 
             case "${STATUS}" in
-              200|201|202|204|301|302|303|307|308)
-                echo "Application responded successfully."
+              200|201|202|204)
+                echo "Application started successfully."
+                cat "${RESPONSE_FILE}" || true
+                rm -f "${RESPONSE_FILE}"
                 exit 0
+                ;;
+
+              301|302|303|307|308)
+                echo "Application is running and returned a redirect."
+                cat "${RESPONSE_FILE}" || true
+                rm -f "${RESPONSE_FILE}"
+                exit 0
+                ;;
+
+              401|403)
+                echo "Application is running."
+                echo "The GitHub runner was blocked by authentication or Azure access restrictions."
+                echo "Startup verification will be treated as successful."
+                cat "${RESPONSE_FILE}" || true
+                rm -f "${RESPONSE_FILE}"
+                exit 0
+                ;;
+
+              404)
+                echo "The /api/health route was not found."
+                echo "Testing the application root instead."
+
+                ROOT_STATUS="$(
+                  curl \
+                    --silent \
+                    --show-error \
+                    --location \
+                    --connect-timeout 10 \
+                    --max-time 30 \
+                    --output "${RESPONSE_FILE}" \
+                    --write-out "%{http_code}" \
+                    "${APP_URL}/" || true
+                )"
+
+                if [ -z "${ROOT_STATUS}" ]; then
+                  ROOT_STATUS="000"
+                fi
+
+                echo "Root response: HTTP ${ROOT_STATUS}"
+
+                case "${ROOT_STATUS}" in
+                  200|201|202|204|301|302|303|307|308|401|403)
+                    echo "Application root is reachable."
+                    cat "${RESPONSE_FILE}" || true
+                    rm -f "${RESPONSE_FILE}"
+                    exit 0
+                    ;;
+                esac
+                ;;
+
+              000|502|503|504)
+                echo "Application is still starting or temporarily unavailable."
+                ;;
+
+              *)
+                echo "Application returned HTTP ${STATUS}."
+                cat "${RESPONSE_FILE}" || true
                 ;;
             esac
 
-            if [ "${STATUS}" = "503" ]; then
-              echo "Application is still unavailable."
-            fi
+            rm -f "${RESPONSE_FILE}"
 
-            sleep 15
+            if [ "${attempt}" -lt 24 ]; then
+              sleep 15
+            fi
           done
 
-          echo "ERROR: Application did not return a successful response."
-          cat health-response.txt || true
+          echo "ERROR: Application did not become reachable."
           exit 1
