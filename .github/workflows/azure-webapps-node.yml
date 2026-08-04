@@ -140,15 +140,12 @@ jobs:
           test -f deploy/.next/BUILD_ID
           test -d deploy/.next/server
           test -d deploy/.next/server/chunks
+          test -d deploy/.next/server/chunks/ssr
           test -d deploy/.next/static
+          test -f deploy/.next/server/app/_not-found/page.js
+          test -f deploy/.next/server/app/_global-error/page.js
           test -f deploy/node_modules/next/package.json
-
-          if [ -f deploy/node_modules/pg/package.json ]; then
-            echo "PostgreSQL dependency included."
-          else
-            echo "ERROR: PostgreSQL dependency was not traced into standalone output."
-            exit 1
-          fi
+          test -f deploy/node_modules/pg/package.json
 
           echo "Testing production dependencies"
 
@@ -157,13 +154,6 @@ jobs:
 
             node -e "require('next'); console.log('next loaded successfully')"
             node -e "require('pg'); console.log('pg loaded successfully')"
-
-            if [ -f ".next/server/app/_not-found/page.js" ]; then
-              node -e "require('./.next/server/app/_not-found/page.js'); console.log('not-found route loaded successfully')"
-            else
-              echo "ERROR: .next/server/app/_not-found/page.js is missing."
-              exit 1
-            fi
           )
 
           echo "Checking the previously missing server chunk"
@@ -186,6 +176,51 @@ jobs:
           else
             echo "Current build no longer references the previous chunk name."
           fi
+
+          echo "Testing standalone Next.js server"
+
+          (
+            cd deploy
+
+            PORT=8081 HOSTNAME=127.0.0.1 node server.js \
+              >standalone-test.log 2>&1 &
+
+            SERVER_PID=$!
+
+            cleanup() {
+              kill "${SERVER_PID}" 2>/dev/null || true
+            }
+
+            trap cleanup EXIT
+
+            for attempt in $(seq 1 20); do
+              STATUS="$(
+                curl \
+                  --silent \
+                  --output standalone-response.txt \
+                  --write-out "%{http_code}" \
+                  "http://127.0.0.1:8081/" || true
+              )"
+
+              if [ -z "${STATUS}" ]; then
+                STATUS="000"
+              fi
+
+              echo "Standalone test attempt ${attempt}: HTTP ${STATUS}"
+
+              if [ "${STATUS}" -ge 200 ] && \
+                 [ "${STATUS}" -lt 500 ]; then
+                echo "Standalone server responded successfully."
+                exit 0
+              fi
+
+              sleep 1
+            done
+
+            echo "ERROR: Standalone server did not respond."
+            cat standalone-test.log || true
+            exit 1
+          )
 
           echo "Creating Azure deployment archive"
 
