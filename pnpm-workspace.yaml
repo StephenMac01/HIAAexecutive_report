@@ -2,5 +2,14 @@ allowBuilds:
   msw: true
   sharp: true
 
+minimumReleaseAgeExclude:
+  - postcss@8.5.23
+  - hono@4.12.34
+  - sharp@0.35.3
+
 overrides:
-  hono: 4.12.25
+  postcss: "8.5.23"
+  ip-address: "10.2.2"
+  hono: "4.12.34"
+  body-parser: "2.3.0"
+  sharp: "0.35.3"
