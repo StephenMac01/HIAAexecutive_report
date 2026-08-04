@@ -10,6 +10,7 @@ env:
   AZURE_WEBAPP_NAME: hiaaexecutivereport-v2
   NODE_VERSION: "22.x"
   PNPM_VERSION: "11.16.0"
+  NEXT_TELEMETRY_DISABLED: "1"
 
 permissions:
   contents: read
@@ -65,8 +66,6 @@ jobs:
 
       - name: Build Next.js application
         shell: bash
-        env:
-          NEXT_TELEMETRY_DISABLED: "1"
         run: |
           set -euxo pipefail
 
@@ -80,30 +79,57 @@ jobs:
           test -d .next/standalone
           test -f .next/standalone/server.js
           test -d .next/standalone/.next/server
+          test -d .next/server
+          test -d .next/server/chunks
           test -d .next/static
+          test -f .next/BUILD_ID
 
-          echo "Standalone output verified."
+          echo "Standalone Next.js output verified."
 
       - name: Prepare Azure deployment package
         shell: bash
         run: |
           set -euxo pipefail
 
+          rm -rf deploy node-app.zip
           mkdir -p deploy
 
           echo "Copying standalone application"
           cp -a .next/standalone/. deploy/
 
-          echo "Copying static assets"
+          echo "Copying complete Next.js server output"
+          rm -rf deploy/.next/server
           mkdir -p deploy/.next
+          cp -a .next/server deploy/.next/server
+
+          echo "Copying Next.js static assets"
+          rm -rf deploy/.next/static
           cp -a .next/static deploy/.next/static
+
+          echo "Copying Next.js build metadata"
+          cp -a .next/BUILD_ID deploy/.next/BUILD_ID
+
+          for file in \
+            app-build-manifest.json \
+            build-manifest.json \
+            fallback-build-manifest.json \
+            prerender-manifest.json \
+            react-loadable-manifest.json \
+            required-server-files.json \
+            routes-manifest.json
+          do
+            if [ -f ".next/${file}" ]; then
+              cp -a ".next/${file}" "deploy/.next/${file}"
+            fi
+          done
 
           if [ -d public ]; then
             echo "Copying public assets"
+            rm -rf deploy/public
             cp -a public deploy/public
           fi
 
-          echo "Removing files that must not be deployed"
+          echo "Removing stale Azure Oryx files"
           rm -f deploy/oryx-manifest.toml
           rm -f deploy/node_modules.tar.gz
           rm -rf deploy/__oryx_packages__
@@ -111,7 +137,9 @@ jobs:
 
           echo "Verifying deployment package"
           test -f deploy/server.js
+          test -f deploy/.next/BUILD_ID
           test -d deploy/.next/server
+          test -d deploy/.next/server/chunks
           test -d deploy/.next/static
           test -f deploy/node_modules/next/package.json
 
@@ -122,14 +150,42 @@ jobs:
             exit 1
           fi
 
-          echo "Testing production dependency loading"
+          echo "Testing production dependencies"
 
           (
             cd deploy
 
             node -e "require('next'); console.log('next loaded successfully')"
             node -e "require('pg'); console.log('pg loaded successfully')"
+
+            if [ -f ".next/server/app/_not-found/page.js" ]; then
+              node -e "require('./.next/server/app/_not-found/page.js'); console.log('not-found route loaded successfully')"
+            else
+              echo "ERROR: .next/server/app/_not-found/page.js is missing."
+              exit 1
+            fi
           )
+
+          echo "Checking the previously missing server chunk"
+
+          PREVIOUS_CHUNK="[root-of-the-server]__00tsl73._.js"
+          PREVIOUS_CHUNK_PATH="deploy/.next/server/chunks/ssr/${PREVIOUS_CHUNK}"
+
+          if grep -R \
+            --fixed-strings \
+            "${PREVIOUS_CHUNK}" \
+            deploy/.next/server >/dev/null 2>&1
+          then
+            if [ ! -f "${PREVIOUS_CHUNK_PATH}" ]; then
+              echo "ERROR: Current build references a missing server chunk:"
+              echo "${PREVIOUS_CHUNK_PATH}"
+              exit 1
+            fi
+
+            echo "Previously referenced server chunk is included."
+          else
+            echo "Current build no longer references the previous chunk name."
+          fi
 
           echo "Creating Azure deployment archive"
 
@@ -157,7 +213,7 @@ jobs:
             exit 1
           fi
 
-          echo "Deployment archive is ready."
+          echo "Deployment archive is complete."
 
       - name: Upload deployment artifact
         uses: actions/upload-artifact@v4
@@ -205,6 +261,8 @@ jobs:
             exit 1
           fi
 
+          echo "Downloaded deployment archive verified."
+
       - name: Read Azure publish-profile credentials
         shell: bash
         env:
@@ -226,7 +284,13 @@ jobs:
                   "AZURE_WEBAPP_PUBLISH_PROFILE is empty or unavailable."
               )
 
-          root = ET.fromstring(profile_xml)
+          try:
+              root = ET.fromstring(profile_xml)
+          except ET.ParseError as error:
+              raise SystemExit(
+                  f"AZURE_WEBAPP_PUBLISH_PROFILE is not valid XML: {error}"
+              ) from error
+
           profiles = root.findall(".//publishProfile")
 
           if not profiles:
@@ -272,11 +336,11 @@ jobs:
 
       - name: Deploy clean ZIP through Azure Kudu
         shell: bash
-        env:
-          KUDU_USERNAME: ${{ env.KUDU_USERNAME }}
-          KUDU_PASSWORD: ${{ env.KUDU_PASSWORD }}
         run: |
           set -euo pipefail
+
+          : "${KUDU_USERNAME:?KUDU_USERNAME is unavailable}"
+          : "${KUDU_PASSWORD:?KUDU_PASSWORD is unavailable}"
 
           KUDU_HOST="hiaaexecutivereport-v2-bqcmdycyg7gthyf5.scm.canadaeast-01.azurewebsites.net"
           KUDU_URL="https://${KUDU_HOST}/api/publish?type=zip&clean=true&restart=true&ignorestack=true"
@@ -289,6 +353,8 @@ jobs:
               --silent \
               --show-error \
               --location \
+              --connect-timeout 30 \
+              --max-time 900 \
               --output kudu-response.txt \
               --write-out "%{http_code}" \
               --user "${KUDU_USERNAME}:${KUDU_PASSWORD}" \
@@ -320,28 +386,38 @@ jobs:
 
           echo "Waiting for the application to start..."
 
-          for attempt in $(seq 1 20); do
+          for attempt in $(seq 1 24); do
             STATUS="$(
               curl \
                 --silent \
                 --show-error \
-                --location \
+                --connect-timeout 15 \
+                --max-time 30 \
                 --output health-response.txt \
                 --write-out "%{http_code}" \
                 "${APP_URL}/" || true
             )"
 
+            if [ -z "${STATUS}" ]; then
+              STATUS="000"
+            fi
+
             echo "Attempt ${attempt}: HTTP ${STATUS}"
 
-            if [ "${STATUS}" -ge 200 ] && \
-               [ "${STATUS}" -lt 500 ]; then
-              echo "Application responded successfully."
-              exit 0
+            case "${STATUS}" in
+              200|201|202|204|301|302|303|307|308)
+                echo "Application responded successfully."
+                exit 0
+                ;;
+            esac
+
+            if [ "${STATUS}" = "503" ]; then
+              echo "Application is still unavailable."
             fi
 
             sleep 15
           done
 
-          echo "ERROR: Application did not respond after deployment."
+          echo "ERROR: Application did not return a successful response."
           cat health-response.txt || true
           exit 1
