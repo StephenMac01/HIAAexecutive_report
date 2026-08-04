@@ -13,6 +13,13 @@ type AuthorizationResult =
       response: NextResponse;
     };
 
+type RevalidateRequestBody = {
+  kpiId?: string;
+  fileName?: string;
+  filename?: string;
+  filePath?: string;
+};
+
 /**
  * Extracts a KPI identifier such as "kpi-01" from a file name or path.
  */
@@ -47,31 +54,38 @@ function deriveKpiId(
  * - Header: x-revalidate-secret
  * - Query string: ?secret=
  *
- * Diagnostic information reports only whether values exist and their lengths.
- * It never logs or returns either secret.
+ * Only presence, source, and length are logged.
+ * Secret values are never logged or returned.
  */
 function authorize(request: Request): AuthorizationResult {
-  const configuredSecret = process.env.REVALIDATE_SECRET?.trim();
+  const configuredSecret = process.env.REVALIDATE_SECRET?.trim() ?? "";
 
-  const headerSecret = request.headers.get("x-revalidate-secret")?.trim();
+  const headerSecret = request.headers.get("x-revalidate-secret")?.trim() ?? "";
 
-  const querySecret = new URL(request.url).searchParams.get("secret")?.trim();
+  const querySecret =
+    new URL(request.url).searchParams.get("secret")?.trim() ?? "";
 
-  const suppliedSecret = headerSecret ?? querySecret;
+  const suppliedSecret = headerSecret || querySecret;
+
+  const source = headerSecret
+    ? "x-revalidate-secret header"
+    : querySecret
+      ? "secret query parameter"
+      : "none";
 
   const diagnostic = {
-    configuredSecretPresent: Boolean(configuredSecret),
-    suppliedSecretPresent: Boolean(suppliedSecret),
-    configuredSecretLength: configuredSecret?.length ?? 0,
-    suppliedSecretLength: suppliedSecret?.length ?? 0,
-    source: headerSecret
-      ? "x-revalidate-secret header"
-      : querySecret
-        ? "secret query parameter"
-        : "none",
+    configuredSecretPresent: configuredSecret.length > 0,
+    suppliedSecretPresent: suppliedSecret.length > 0,
+    configuredSecretLength: configuredSecret.length,
+    suppliedSecretLength: suppliedSecret.length,
+    source,
+    match:
+      configuredSecret.length > 0 &&
+      suppliedSecret.length > 0 &&
+      suppliedSecret === configuredSecret,
   };
 
-  console.log("Revalidate authorization check", diagnostic);
+  console.log("[revalidate] authorization check", diagnostic);
 
   if (!configuredSecret) {
     return {
@@ -81,7 +95,10 @@ function authorize(request: Request): AuthorizationResult {
           error: "Webhook is not configured.",
           diagnostic: {
             configuredSecretPresent: false,
-            suppliedSecretPresent: Boolean(suppliedSecret),
+            suppliedSecretPresent: suppliedSecret.length > 0,
+            configuredSecretLength: 0,
+            suppliedSecretLength: suppliedSecret.length,
+            source,
           },
         },
         { status: 503 },
@@ -96,10 +113,11 @@ function authorize(request: Request): AuthorizationResult {
         {
           error: "Unauthorized",
           diagnostic: {
-            configuredSecretPresent: Boolean(configuredSecret),
-            suppliedSecretPresent: Boolean(suppliedSecret),
+            configuredSecretPresent: true,
+            suppliedSecretPresent: suppliedSecret.length > 0,
             configuredSecretLength: configuredSecret.length,
-            suppliedSecretLength: suppliedSecret?.length ?? 0,
+            suppliedSecretLength: suppliedSecret.length,
+            source,
           },
         },
         { status: 401 },
@@ -128,16 +146,14 @@ export async function POST(request: Request) {
     return authorization.response;
   }
 
-  const body = (await request.json().catch(() => ({}))) as {
-    kpiId?: string;
-    fileName?: string;
-    filename?: string;
-    filePath?: string;
-  };
+  const body = (await request
+    .json()
+    .catch(() => ({}))) as RevalidateRequestBody;
 
   const url = new URL(request.url);
 
-  const explicitId = body.kpiId ?? url.searchParams.get("kpiId") ?? undefined;
+  const explicitId =
+    body.kpiId?.trim() || url.searchParams.get("kpiId")?.trim() || undefined;
 
   const resolvedId =
     explicitId ??
@@ -182,24 +198,23 @@ export async function POST(request: Request) {
 /**
  * Diagnostic endpoint.
  *
- * It confirms whether the route is reachable and whether authentication
- * succeeds, without exposing the secret value.
+ * This confirms whether the route is reachable and whether authentication
+ * succeeds. It does not perform revalidation.
  */
 export async function GET(request: Request) {
   const authorization = authorize(request);
 
-  return NextResponse.json(
-    {
-      status: "ok",
-      endpoint: "/api/revalidate",
-      postRequiredForRevalidation: true,
-      secretConfigured: Boolean(process.env.REVALIDATE_SECRET?.trim()),
-      authenticated: authorization.ok,
-      kpis: KPIS.length,
-      timestamp: new Date().toISOString(),
-    },
-    {
-      status: authorization.ok ? 200 : 401,
-    },
-  );
+  if (!authorization.ok) {
+    return authorization.response;
+  }
+
+  return NextResponse.json({
+    status: "ok",
+    endpoint: "/api/revalidate",
+    postRequiredForRevalidation: true,
+    secretConfigured: true,
+    authenticated: true,
+    kpis: KPIS.length,
+    timestamp: new Date().toISOString(),
+  });
 }
