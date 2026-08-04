@@ -1,84 +1,81 @@
+// @ts-check
+
 /** @type {import("next").NextConfig} */
 const nextConfig = {
+  /**
+   * Produces the minimal Node.js deployment package used by
+   * Azure App Service.
+   */
   output: "standalone",
 
+  /**
+   * These origins are only relevant during development.
+   * They do not control production CORS access.
+   */
   allowedDevOrigins: ["*.vusercontent.net", "*.vercel.run"],
 
+  /**
+   * Azure will serve images directly without requiring the
+   * Next.js image-optimization runtime.
+   */
   images: {
     unoptimized: true,
   },
 
+  /**
+   * Keep PostgreSQL as a native Node.js runtime dependency
+   * rather than bundling it into Server Components.
+   */
   serverExternalPackages: ["pg"],
 
+  /**
+   * Ensure local Excel fallback files are included in the
+   * standalone Azure deployment.
+   *
+   * PostgreSQL packages do not need to be manually listed here.
+   * Next.js traces dependencies used by serverExternalPackages.
+   */
   outputFileTracingIncludes: {
-    "/kpi/[id]": [
-      "./data/**/*.xlsx",
-      "./node_modules/pg/**/*",
-      "./node_modules/pg-types/**/*",
-      "./node_modules/pg-pool/**/*",
-      "./node_modules/pg-protocol/**/*",
-      "./node_modules/pg-connection-string/**/*",
-      "./node_modules/pgpass/**/*",
-      "./node_modules/pg-int8/**/*",
-      "./node_modules/pg-numeric/**/*",
-      "./node_modules/postgres-array/**/*",
-      "./node_modules/postgres-bytea/**/*",
-      "./node_modules/postgres-date/**/*",
-      "./node_modules/postgres-interval/**/*",
-      "./node_modules/postgres-range/**/*",
-      "./node_modules/obuf/**/*",
-      "./node_modules/split2/**/*",
-    ],
-
-    "/reports": [
-      "./data/**/*.xlsx",
-      "./node_modules/pg/**/*",
-      "./node_modules/pg-types/**/*",
-      "./node_modules/pg-pool/**/*",
-      "./node_modules/pg-protocol/**/*",
-      "./node_modules/pg-connection-string/**/*",
-      "./node_modules/pgpass/**/*",
-      "./node_modules/pg-int8/**/*",
-      "./node_modules/pg-numeric/**/*",
-      "./node_modules/postgres-array/**/*",
-      "./node_modules/postgres-bytea/**/*",
-      "./node_modules/postgres-date/**/*",
-      "./node_modules/postgres-interval/**/*",
-      "./node_modules/postgres-range/**/*",
-      "./node_modules/obuf/**/*",
-      "./node_modules/split2/**/*",
-    ],
-
-    "/*": [
-      "./node_modules/pg/**/*",
-      "./node_modules/pg-types/**/*",
-      "./node_modules/pg-pool/**/*",
-      "./node_modules/pg-protocol/**/*",
-      "./node_modules/pg-connection-string/**/*",
-      "./node_modules/pgpass/**/*",
-      "./node_modules/pg-int8/**/*",
-      "./node_modules/pg-numeric/**/*",
-      "./node_modules/postgres-array/**/*",
-      "./node_modules/postgres-bytea/**/*",
-      "./node_modules/postgres-date/**/*",
-      "./node_modules/postgres-interval/**/*",
-      "./node_modules/postgres-range/**/*",
-      "./node_modules/obuf/**/*",
-      "./node_modules/split2/**/*",
-    ],
+    "/*": ["./data/**/*.xlsx"],
   },
 
+  /**
+   * Removes the default X-Powered-By response header.
+   */
+  poweredByHeader: false,
+
+  /**
+   * Enables HTTP response compression.
+   */
+  compress: true,
+
+  /**
+   * Prevent browser-accessible production source maps.
+   */
+  productionBrowserSourceMaps: false,
+
+  /**
+   * Security headers applied to all routes.
+   *
+   * CSP remains Report-Only while the application is being tested.
+   * This records violations without breaking Next.js scripts,
+   * authentication, downloads, or dashboard functionality.
+   */
   async headers() {
-    const csp = [
+    const contentSecurityPolicy = [
       "default-src 'self'",
+      "base-uri 'self'",
+      "object-src 'none'",
+      "frame-ancestors 'self'",
+      "form-action 'self'",
       "img-src 'self' data: blob:",
+      "font-src 'self' data:",
       "style-src 'self' 'unsafe-inline'",
       "script-src 'self' 'unsafe-inline'",
-      "connect-src 'self'",
-      "font-src 'self' data:",
-      "object-src 'none'",
-      "base-uri 'self'",
-      "frame-ancestors 'self'",
+      "connect-src 'self' https://login.microsoftonline.com",
+      "worker-src 'self' blob:",
+      "manifest-src 'self'",
+      "upgrade-insecure-requests",
     ].join("; ");
 
     return [
@@ -103,11 +100,25 @@ const nextConfig = {
           },
           {
             key: "Permissions-Policy",
-            value: "camera=(), microphone=(), geolocation=()",
+            value:
+              "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
           },
           {
             key: "Content-Security-Policy-Report-Only",
-            value: csp,
+            value: contentSecurityPolicy,
+          },
+        ],
+      },
+
+      /**
+       * API endpoints should not be cached by browsers or proxies.
+       */
+      {
+        source: "/api/:path*",
+        headers: [
+          {
+            key: "Cache-Control",
+            value: "no-store, no-cache, must-revalidate",
           },
         ],
       },

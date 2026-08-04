@@ -14,10 +14,15 @@ env:
 permissions:
   contents: read
 
+concurrency:
+  group: hiaaexecutivereport-v2-production
+  cancel-in-progress: true
+
 jobs:
   build:
     name: Build deployment package
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
       - name: Check out repository
@@ -44,32 +49,52 @@ jobs:
           node --version
           pnpm --version
 
-      - name: Install application dependencies
+      - name: Install dependencies
         shell: bash
         run: |
           set -euxo pipefail
 
           pnpm install --frozen-lockfile
 
+      - name: Clean previous build
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          rm -rf .next deploy node-app.zip
+
       - name: Build Next.js application
         shell: bash
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
         run: |
           set -euxo pipefail
 
           pnpm build
 
-      - name: Prepare standalone Azure application
+      - name: Verify standalone output
         shell: bash
         run: |
           set -euxo pipefail
 
-          rm -rf deploy node-app.zip
+          test -d .next/standalone
+          test -f .next/standalone/server.js
+          test -d .next/standalone/.next/server
+          test -d .next/static
+
+          echo "Standalone output verified."
+
+      - name: Prepare Azure deployment package
+        shell: bash
+        run: |
+          set -euxo pipefail
+
           mkdir -p deploy
 
-          echo "Copying Next.js standalone output"
+          echo "Copying standalone application"
           cp -a .next/standalone/. deploy/
 
-          echo "Copying Next.js static assets"
+          echo "Copying static assets"
           mkdir -p deploy/.next
           cp -a .next/static deploy/.next/static
 
@@ -78,42 +103,24 @@ jobs:
             cp -a public deploy/public
           fi
 
-          echo "Copying package metadata"
-          cp package.json deploy/package.json
-          cp pnpm-lock.yaml deploy/pnpm-lock.yaml
-
-          if [ -f pnpm-workspace.yaml ]; then
-            cp pnpm-workspace.yaml deploy/pnpm-workspace.yaml
-          fi
-
-          if [ -f .npmrc ]; then
-            cp .npmrc deploy/.npmrc
-          fi
-
-          echo "Installing hoisted production dependency tree"
-
-          pnpm install \
-            --dir deploy \
-            --prod \
-            --frozen-lockfile \
-            --ignore-scripts \
-            --config.node-linker=hoisted
-
-          echo "Removing stale Azure Oryx files"
-
+          echo "Removing files that must not be deployed"
           rm -f deploy/oryx-manifest.toml
           rm -f deploy/node_modules.tar.gz
           rm -rf deploy/__oryx_packages__
           rm -rf deploy/_del_node_modules
 
-          echo "Verifying deployment files"
-
+          echo "Verifying deployment package"
           test -f deploy/server.js
-          test -f deploy/package.json
+          test -d deploy/.next/server
+          test -d deploy/.next/static
           test -f deploy/node_modules/next/package.json
-          test -f deploy/node_modules/@next/env/package.json
-          test -f deploy/node_modules/@swc/helpers/package.json
-          test -f deploy/node_modules/pg/package.json
+
+          if [ -f deploy/node_modules/pg/package.json ]; then
+            echo "PostgreSQL dependency included."
+          else
+            echo "ERROR: PostgreSQL dependency was not traced into standalone output."
+            exit 1
+          fi
 
           echo "Testing production dependency loading"
 
@@ -121,8 +128,6 @@ jobs:
             cd deploy
 
             node -e "require('next'); console.log('next loaded successfully')"
-            node -e "require('@next/env'); console.log('@next/env loaded successfully')"
-            node -e "require('@swc/helpers/_/_interop_require_default'); console.log('@swc/helpers loaded successfully')"
             node -e "require('pg'); console.log('pg loaded successfully')"
           )
 
@@ -137,23 +142,22 @@ jobs:
 
           test -f node-app.zip
 
-          unzip -l node-app.zip | grep "server.js"
-          unzip -l node-app.zip | grep "node_modules/next/package.json"
-          unzip -l node-app.zip | grep "node_modules/@next/env/package.json"
-          unzip -l node-app.zip | grep "node_modules/@swc/helpers/package.json"
-          unzip -l node-app.zip | grep "node_modules/pg/package.json"
+          unzip -Z1 node-app.zip | grep -Fx "server.js"
+          unzip -Z1 node-app.zip | grep -Fx ".next/BUILD_ID"
+          unzip -Z1 node-app.zip | grep -Fx "node_modules/next/package.json"
+          unzip -Z1 node-app.zip | grep -Fx "node_modules/pg/package.json"
 
-          if unzip -l node-app.zip | grep -q "oryx-manifest.toml"; then
-            echo "ERROR: Oryx manifest unexpectedly included"
+          if unzip -Z1 node-app.zip | grep -q "^oryx-manifest.toml$"; then
+            echo "ERROR: Oryx manifest unexpectedly included."
             exit 1
           fi
 
-          if unzip -l node-app.zip | grep -q "node_modules.tar.gz"; then
-            echo "ERROR: Oryx node_modules archive unexpectedly included"
+          if unzip -Z1 node-app.zip | grep -q "^node_modules.tar.gz$"; then
+            echo "ERROR: Oryx node_modules archive unexpectedly included."
             exit 1
           fi
 
-          echo "Deployment archive is ready"
+          echo "Deployment archive is ready."
 
       - name: Upload deployment artifact
         uses: actions/upload-artifact@v4
@@ -167,6 +171,7 @@ jobs:
     name: Deploy to Azure App Service
     runs-on: ubuntu-latest
     needs: build
+    timeout-minutes: 20
 
     permissions:
       contents: none
@@ -185,19 +190,18 @@ jobs:
 
           test -f artifact/node-app.zip
 
-          unzip -l artifact/node-app.zip | grep "server.js"
-          unzip -l artifact/node-app.zip | grep "node_modules/next/package.json"
-          unzip -l artifact/node-app.zip | grep "node_modules/@next/env/package.json"
-          unzip -l artifact/node-app.zip | grep "node_modules/@swc/helpers/package.json"
-          unzip -l artifact/node-app.zip | grep "node_modules/pg/package.json"
+          unzip -Z1 artifact/node-app.zip | grep -Fx "server.js"
+          unzip -Z1 artifact/node-app.zip | grep -Fx ".next/BUILD_ID"
+          unzip -Z1 artifact/node-app.zip | grep -Fx "node_modules/next/package.json"
+          unzip -Z1 artifact/node-app.zip | grep -Fx "node_modules/pg/package.json"
 
-          if unzip -l artifact/node-app.zip | grep -q "oryx-manifest.toml"; then
-            echo "ERROR: Oryx manifest unexpectedly included"
+          if unzip -Z1 artifact/node-app.zip | grep -q "^oryx-manifest.toml$"; then
+            echo "ERROR: Oryx manifest unexpectedly included."
             exit 1
           fi
 
-          if unzip -l artifact/node-app.zip | grep -q "node_modules.tar.gz"; then
-            echo "ERROR: Oryx node_modules archive unexpectedly included"
+          if unzip -Z1 artifact/node-app.zip | grep -q "^node_modules.tar.gz$"; then
+            echo "ERROR: Oryx node_modules archive unexpectedly included."
             exit 1
           fi
 
@@ -212,7 +216,10 @@ jobs:
           import os
           import xml.etree.ElementTree as ET
 
-          profile_xml = os.environ.get("AZURE_PUBLISH_PROFILE", "").strip()
+          profile_xml = os.environ.get(
+              "AZURE_PUBLISH_PROFILE",
+              "",
+          ).strip()
 
           if not profile_xml:
               raise SystemExit(
@@ -224,13 +231,16 @@ jobs:
 
           if not profiles:
               raise SystemExit(
-                  "No publishProfile entries were found in the Azure publish profile."
+                  "No publishProfile entries were found."
               )
 
           selected = None
 
           for profile in profiles:
-              method = profile.attrib.get("publishMethod", "").lower()
+              method = profile.attrib.get(
+                  "publishMethod",
+                  "",
+              ).lower()
 
               if method in {"zipdeploy", "msdeploy"}:
                   selected = profile
@@ -244,12 +254,16 @@ jobs:
 
           if not username or not password:
               raise SystemExit(
-                  "The Azure publish profile does not contain deployment credentials."
+                  "The publish profile does not contain deployment credentials."
               )
 
           github_env = os.environ["GITHUB_ENV"]
 
-          with open(github_env, "a", encoding="utf-8") as env_file:
+          with open(
+              github_env,
+              "a",
+              encoding="utf-8",
+          ) as env_file:
               env_file.write(f"KUDU_USERNAME={username}\n")
               env_file.write(f"KUDU_PASSWORD={password}\n")
 
@@ -267,29 +281,67 @@ jobs:
           KUDU_HOST="hiaaexecutivereport-v2-bqcmdycyg7gthyf5.scm.canadaeast-01.azurewebsites.net"
           KUDU_URL="https://${KUDU_HOST}/api/publish?type=zip&clean=true&restart=true&ignorestack=true"
 
-          echo "Deploying tested ZIP package directly through Kudu"
+          echo "Deploying tested ZIP through Azure Kudu"
           echo "Kudu host: ${KUDU_HOST}"
 
-          HTTP_STATUS=$(curl \
-            --silent \
-            --show-error \
-            --location \
-            --output kudu-response.txt \
-            --write-out "%{http_code}" \
-            --user "${KUDU_USERNAME}:${KUDU_PASSWORD}" \
-            --header "Content-Type: application/zip" \
-            --request POST \
-            --data-binary "@artifact/node-app.zip" \
-            "${KUDU_URL}")
+          HTTP_STATUS="$(
+            curl \
+              --silent \
+              --show-error \
+              --location \
+              --output kudu-response.txt \
+              --write-out "%{http_code}" \
+              --user "${KUDU_USERNAME}:${KUDU_PASSWORD}" \
+              --header "Content-Type: application/zip" \
+              --request POST \
+              --data-binary "@artifact/node-app.zip" \
+              "${KUDU_URL}"
+          )"
 
           echo "Kudu response:"
           cat kudu-response.txt || true
           echo
           echo "Kudu HTTP status: ${HTTP_STATUS}"
 
-          if [ "${HTTP_STATUS}" -lt 200 ] || [ "${HTTP_STATUS}" -ge 300 ]; then
+          if [ "${HTTP_STATUS}" -lt 200 ] || \
+             [ "${HTTP_STATUS}" -ge 300 ]; then
             echo "ERROR: Azure deployment failed."
             exit 1
           fi
 
           echo "Azure deployment completed successfully."
+
+      - name: Wait for application startup
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          APP_URL="https://hiaaexecutivereport-v2-bqcmdycyg7gthyf5.canadaeast-01.azurewebsites.net"
+
+          echo "Waiting for the application to start..."
+
+          for attempt in $(seq 1 20); do
+            STATUS="$(
+              curl \
+                --silent \
+                --show-error \
+                --location \
+                --output health-response.txt \
+                --write-out "%{http_code}" \
+                "${APP_URL}/" || true
+            )"
+
+            echo "Attempt ${attempt}: HTTP ${STATUS}"
+
+            if [ "${STATUS}" -ge 200 ] && \
+               [ "${STATUS}" -lt 500 ]; then
+              echo "Application responded successfully."
+              exit 0
+            fi
+
+            sleep 15
+          done
+
+          echo "ERROR: Application did not respond after deployment."
+          cat health-response.txt || true
+          exit 1
