@@ -362,217 +362,58 @@ jobs:
 
           echo "Downloaded deployment archive verified."
 
-      - name: Read Azure publish-profile credentials
-        shell: bash
-        env:
-          AZURE_PUBLISH_PROFILE: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
-        run: |
-          set -euo pipefail
+      - name: Sign in to Azure
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-          python - <<'PY'
-          import os
-          import xml.etree.ElementTree as ET
-
-          profile_xml = os.environ.get(
-              "AZURE_PUBLISH_PROFILE",
-              "",
-          ).strip()
-
-          if not profile_xml:
-              raise SystemExit(
-                  "AZURE_WEBAPP_PUBLISH_PROFILE is empty or unavailable."
-              )
-
-          try:
-              root = ET.fromstring(profile_xml)
-          except ET.ParseError as error:
-              raise SystemExit(
-                  f"AZURE_WEBAPP_PUBLISH_PROFILE is not valid XML: {error}"
-              ) from error
-
-          profiles = root.findall(".//publishProfile")
-
-          if not profiles:
-              raise SystemExit(
-                  "No publishProfile entries were found."
-              )
-
-          selected = None
-
-          for profile in profiles:
-              method = profile.attrib.get(
-                  "publishMethod",
-                  "",
-              ).lower()
-
-              if method in {"zipdeploy", "msdeploy"}:
-                  selected = profile
-                  break
-
-          if selected is None:
-              selected = profiles[0]
-
-          username = selected.attrib.get("userName", "")
-          password = selected.attrib.get("userPWD", "")
-
-          if not username or not password:
-              raise SystemExit(
-                  "The publish profile does not contain deployment credentials."
-              )
-
-          # Azure issues region-specific SCM (Kudu) hostnames, e.g.
-          # <app>-<hash>.canadaeast-01.azurewebsites.net, so the host must be
-          # read from the profile's publishUrl rather than constructed as
-          # <app>.scm.azurewebsites.net (which no longer resolves -> curl (6)).
-          publish_url = selected.attrib.get("publishUrl", "").strip()
-
-          # Normalize: drop scheme, any path, and the :port suffix.
-          if "://" in publish_url:
-              publish_url = publish_url.split("://", 1)[1]
-          publish_url = publish_url.split("/", 1)[0]
-          kudu_host = publish_url.split(":", 1)[0]
-
-          if not kudu_host:
-              raise SystemExit(
-                  "The publish profile does not contain a publishUrl (Kudu host)."
-              )
-
-          github_env = os.environ["GITHUB_ENV"]
-
-          with open(
-              github_env,
-              "a",
-              encoding="utf-8",
-          ) as env_file:
-              env_file.write(f"KUDU_USERNAME={username}\n")
-              env_file.write(f"KUDU_PASSWORD={password}\n")
-              env_file.write(f"KUDU_HOST={kudu_host}\n")
-
-          print(f"Azure Kudu deployment credentials loaded. Kudu host: {kudu_host}")
-          PY
-
-      - name: Deploy clean ZIP through Azure Kudu
+      - name: Deploy run-from-package ZIP
         shell: bash
         run: |
           set -euo pipefail
 
-          : "${KUDU_USERNAME:?KUDU_USERNAME is unavailable}"
-          : "${KUDU_PASSWORD:?KUDU_PASSWORD is unavailable}"
+          : "${{ secrets.AZURE_RESOURCE_GROUP }}"
 
-          # Prefer the region-aware host parsed from the publish profile's
-          # publishUrl. Fall back to the legacy pattern only if it is missing.
-          KUDU_HOST="${KUDU_HOST:-${AZURE_WEBAPP_NAME}.scm.azurewebsites.net}"
-          KUDU_URL="https://${KUDU_HOST}/api/zipdeploy"
+          echo "Configuring Azure App Service for run-from-package deployment"
 
-          echo "Deploying tested ZIP through Azure Kudu"
-          echo "Kudu host: ${KUDU_HOST}"
+          az webapp config appsettings set \
+            --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
+            --name "${{ env.AZURE_WEBAPP_NAME }}" \
+            --settings \
+              WEBSITE_RUN_FROM_PACKAGE=1 \
+              SCM_DO_BUILD_DURING_DEPLOYMENT=false \
+              ENABLE_ORYX_BUILD=false \
+              ENABLE_NODE_MODULES_ZIP=false \
+            --output none
 
-          # Fail early with a clear message if DNS cannot resolve the host,
-          # instead of a bare "curl (6)".
-          if ! getent hosts "${KUDU_HOST}" >/dev/null 2>&1 \
-             && ! nslookup "${KUDU_HOST}" >/dev/null 2>&1; then
-            echo "ERROR: Could not resolve Kudu host '${KUDU_HOST}'."
-            echo "Verify the publish profile is current (download a fresh one" \
-                 "from the App Service > Deployment Center if the app was" \
-                 "recreated or renamed)."
-            exit 1
-          fi
+          echo "Confirming deployment settings"
 
-          HTTP_STATUS="$(
-            curl \
-              --silent \
-              --show-error \
-              --location \
-              --connect-timeout 30 \
-              --max-time 900 \
-              --output kudu-response.txt \
-              --write-out "%{http_code}" \
-              --user "${KUDU_USERNAME}:${KUDU_PASSWORD}" \
-              --header "Content-Type: application/zip" \
-              --request POST \
-              --data-binary "@artifact/node-app.zip" \
-              "${KUDU_URL}"
-          )"
+          az webapp config appsettings list \
+            --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
+            --name "${{ env.AZURE_WEBAPP_NAME }}" \
+            --query "[?name=='WEBSITE_RUN_FROM_PACKAGE' || name=='SCM_DO_BUILD_DURING_DEPLOYMENT' || name=='ENABLE_ORYX_BUILD' || name=='ENABLE_NODE_MODULES_ZIP'].{name:name,value:value}" \
+            --output table
 
-          echo "Kudu response:"
-          cat kudu-response.txt || true
-          echo
-          echo "Kudu HTTP status: ${HTTP_STATUS}"
+          echo "Deploying the prebuilt ZIP package"
 
-          if [ "${HTTP_STATUS}" -lt 200 ] || \
-             [ "${HTTP_STATUS}" -ge 300 ]; then
-            echo "ERROR: Azure deployment failed."
-            exit 1
-          fi
+          az webapp deploy \
+            --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
+            --name "${{ env.AZURE_WEBAPP_NAME }}" \
+            --src-path artifact/node-app.zip \
+            --type zip \
+            --clean true \
+            --restart true \
+            --track-status true \
+            --timeout 900000
 
-          echo "Azure deployment completed successfully."
-
-      - name: Verify server-side package (detect Oryx tampering)
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          : "${KUDU_USERNAME:?KUDU_USERNAME is unavailable}"
-          : "${KUDU_PASSWORD:?KUDU_PASSWORD is unavailable}"
-          KUDU_HOST="${KUDU_HOST:-${AZURE_WEBAPP_NAME}.scm.azurewebsites.net}"
-
-          # Inspect what actually landed in wwwroot. If Oryx ran, it leaves an
-          # oryx-manifest.toml and repackages node_modules, frequently dropping
-          # next / @swc/helpers -> the app crashes and Azure returns 503.
-          REMOTE_CMD='echo "--- wwwroot ---"; ls -1 /home/site/wwwroot | head -40; echo "--- checks ---"; test -f /home/site/wwwroot/server.js && echo SERVER_OK || echo SERVER_MISSING; test -f /home/site/wwwroot/node_modules/next/package.json && echo NEXT_OK || echo NEXT_MISSING; test -f /home/site/wwwroot/node_modules/@swc/helpers/package.json && echo SWC_OK || echo SWC_MISSING; test -f /home/site/wwwroot/oryx-manifest.toml && echo ORYX_RAN || echo ORYX_ABSENT'
-
-          # Kudu command API expects JSON {"command": "...", "dir": "..."}.
-          # Build the JSON body with a single-line python call (keeps YAML happy).
-          BODY="$(REMOTE_CMD="${REMOTE_CMD}" python3 -c 'import json,os; print(json.dumps({"command": os.environ["REMOTE_CMD"], "dir": "/home/site/wwwroot"}))')"
-
-          RESPONSE="$(
-            curl \
-              --silent \
-              --show-error \
-              --connect-timeout 30 \
-              --max-time 120 \
-              --user "${KUDU_USERNAME}:${KUDU_PASSWORD}" \
-              --header "Content-Type: application/json" \
-              --request POST \
-              --data "${BODY}" \
-              "https://${KUDU_HOST}/api/command" || true
-          )"
-
-          # Kudu returns JSON whose "Output" string embeds our marker tokens
-          # (SERVER_OK, NEXT_MISSING, ORYX_RAN, ...). The tokens survive as
-          # literal substrings, so we grep the raw response directly instead of
-          # parsing JSON (which avoids fragile multi-line parsing in YAML).
-          echo "Server-side wwwroot inspection (raw Kudu response):"
-          echo "${RESPONSE}"
-
-          if echo "${RESPONSE}" | grep -q "ORYX_RAN"; then
-            echo "ERROR: Oryx build ran on the server (oryx-manifest.toml present)."
-            echo "This repackages node_modules and breaks the prebuilt standalone bundle."
-            echo "FIX (Azure Portal -> App Service -> Settings -> Configuration ->"
-            echo "Application settings), then redeploy:"
-            echo "  SCM_DO_BUILD_DURING_DEPLOYMENT = false"
-            echo "  ENABLE_ORYX_BUILD              = false"
-            echo "And under General settings set the Startup Command to: node server.js"
-            exit 1
-          fi
-
-          if echo "${RESPONSE}" | grep -qE "NEXT_MISSING|SWC_MISSING|SERVER_MISSING"; then
-            echo "ERROR: The deployed bundle is incomplete on the server."
-            echo "Expected server.js + node_modules/next + node_modules/@swc/helpers."
-            echo "This is the classic symptom of Oryx build-on-deploy. Apply the app"
-            echo "settings above (SCM_DO_BUILD_DURING_DEPLOYMENT=false,"
-            echo "ENABLE_ORYX_BUILD=false) and redeploy."
-            exit 1
-          fi
-
-          echo "Server-side bundle verified: no Oryx tampering, next/@swc present."
+          echo "Run-from-package deployment completed."
 
       - name: Verify application startup
         shell: bash
         run: |
           set -euo pipefail
 
-          APP_URL="https://${AZURE_WEBAPP_NAME}.azurewebsites.net"
+          APP_URL="https://hiaaexecutivereport-v2-bqcmdycyg7gthyf5.canadaeast-01.azurewebsites.net"
           HEALTH_URL="${APP_URL}/api/health"
 
           echo "Waiting for the application to start..."
