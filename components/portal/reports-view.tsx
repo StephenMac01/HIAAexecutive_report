@@ -1,7 +1,8 @@
 "use client"
 
-import { Suspense, useMemo, useState, type ReactNode } from "react"
-import { FileDown, Printer, CheckSquare, Square } from "lucide-react"
+import { Suspense, useMemo, useRef, useState, type ReactNode } from "react"
+import { FileDown, Loader2, Printer, CheckSquare, Square } from "lucide-react"
+import { exportElementToPdf } from "@/lib/pdf/export-report"
 
 export type ReportSection = {
   id: string
@@ -13,6 +14,8 @@ export type ReportSection = {
 export function ReportsView({ sections }: { sections: ReportSection[] }) {
   const allIds = useMemo(() => sections.map((s) => s.id), [sections])
   const [selected, setSelected] = useState<Set<string>>(() => new Set(allIds))
+  const [exporting, setExporting] = useState(false)
+  const reportRef = useRef<HTMLDivElement>(null)
 
   const selectedCount = selected.size
   const allSelected = selectedCount === allIds.length
@@ -36,6 +39,22 @@ export function ReportsView({ sections }: { sections: ReportSection[] }) {
     window.print()
   }
 
+  async function handleDownloadPdf() {
+    if (noneSelected || !reportRef.current) return
+    setExporting(true)
+    try {
+      const today = new Date().toISOString().slice(0, 10)
+      await exportElementToPdf(reportRef.current, {
+        fileName: `CNS-HIAA-KPI-Report-${today}.pdf`,
+      })
+    } catch (error) {
+      console.log("[v0] PDF export failed, falling back to print:", error)
+      window.print()
+    } finally {
+      setExporting(false)
+    }
+  }
+
   const visibleSections = sections.filter((s) => selected.has(s.id))
   const generatedOn = new Date().toLocaleDateString("en-CA", {
     year: "numeric",
@@ -50,8 +69,8 @@ export function ReportsView({ sections }: { sections: ReportSection[] }) {
         <div className="mb-6 flex flex-col gap-1">
           <h1 className="text-balance text-2xl font-bold tracking-tight text-navy sm:text-3xl">KPI Reports</h1>
           <p className="text-pretty text-sm text-muted-foreground">
-            Select the KPIs to include, then export a printable PDF. Use your browser&apos;s print dialog and choose
-            &ldquo;Save as PDF&rdquo; to download the report.
+            Select the KPIs to include, then click <span className="font-medium text-foreground">Download PDF</span> to
+            save a report file, or <span className="font-medium text-foreground">Print</span> to send it to a printer.
           </p>
         </div>
 
@@ -72,17 +91,18 @@ export function ReportsView({ sections }: { sections: ReportSection[] }) {
               </span>
               <button
                 type="button"
-                onClick={handlePrint}
-                disabled={noneSelected}
+                onClick={handleDownloadPdf}
+                disabled={noneSelected || exporting}
+                aria-busy={exporting}
                 className="inline-flex items-center gap-2 rounded-lg bg-navy px-4 py-2 text-sm font-semibold text-navy-foreground shadow-sm transition-colors hover:bg-navy/90 disabled:pointer-events-none disabled:opacity-50"
               >
-                <FileDown className="size-4" />
-                Download PDF
+                {exporting ? <Loader2 className="size-4 animate-spin" /> : <FileDown className="size-4" />}
+                {exporting ? "Preparing PDF…" : "Download PDF"}
               </button>
               <button
                 type="button"
                 onClick={handlePrint}
-                disabled={noneSelected}
+                disabled={noneSelected || exporting}
                 className="inline-flex items-center gap-2 rounded-lg border border-navy/15 bg-card px-4 py-2 text-sm font-semibold text-navy transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
               >
                 <Printer className="size-4" />
@@ -119,15 +139,17 @@ export function ReportsView({ sections }: { sections: ReportSection[] }) {
         </div>
       </div>
 
-      {/* Print cover sheet (print only) */}
-      <div className="hidden print:block">
-        <div className="mb-6 border-b-2 border-navy pb-4">
-          <p className="text-xs font-semibold uppercase tracking-wider text-aviation-blue">CNS HIAA</p>
-          <h2 className="text-2xl font-bold text-navy">Airport KPI Report</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Generated {generatedOn} · {selectedCount} KPI{selectedCount === 1 ? "" : "s"} included
-          </p>
-        </div>
+      <div ref={reportRef} className="bg-background">
+      {/* Print/PDF cover sheet */}
+      <div
+        data-pdf-section
+        className="mb-6 hidden border-b-2 border-navy pb-4 print:block [.pdf-capture_&]:block"
+      >
+        <p className="text-xs font-semibold uppercase tracking-wider text-aviation-blue">CNS HIAA</p>
+        <h2 className="text-2xl font-bold text-navy">Airport KPI Report</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Generated {generatedOn} · {selectedCount} KPI{selectedCount === 1 ? "" : "s"} included
+        </p>
       </div>
 
       {/* Report body */}
@@ -140,6 +162,7 @@ export function ReportsView({ sections }: { sections: ReportSection[] }) {
           {visibleSections.map((s, i) => (
             <section
               key={s.id}
+              data-pdf-section
               className={"report-section rounded-xl border border-navy/10 bg-card " + (i > 0 ? "report-page-break" : "")}
             >
               <div className="flex items-center justify-between gap-2 border-b border-navy/10 px-5 py-3">
@@ -164,6 +187,7 @@ export function ReportsView({ sections }: { sections: ReportSection[] }) {
           ))}
         </div>
       )}
+      </div>
     </div>
   )
 }

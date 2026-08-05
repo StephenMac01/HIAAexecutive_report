@@ -40,7 +40,7 @@ export async function ExecutiveSummaryDashboard() {
   const onTarget = s.contributions.filter((c) => c.status === "green").length
 
   return (
-    <div className="flex flex-col gap-6">
+    <div id="exec-report-root" className="flex flex-col gap-6">
       <PrintToolbar
         reportingMonth={s.reportingMonth}
         kpisReported={s.kpisReported}

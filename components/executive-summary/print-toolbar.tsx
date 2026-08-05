@@ -1,6 +1,8 @@
 "use client"
 
-import { FileDown, Printer } from "lucide-react"
+import { useState } from "react"
+import { FileDown, Loader2, Printer } from "lucide-react"
+import { exportElementToPdf } from "@/lib/pdf/export-report"
 
 export function PrintToolbar({
   reportingMonth,
@@ -34,8 +36,30 @@ export function PrintToolbar({
     timeZone: REPORT_TZ,
   })
 
+  const [exporting, setExporting] = useState(false)
+
   function handlePrint() {
     window.print()
+  }
+
+  async function handleDownloadPdf() {
+    const target = document.getElementById("exec-report-root")
+    if (!target) {
+      window.print()
+      return
+    }
+    setExporting(true)
+    try {
+      await exportElementToPdf(target, {
+        fileName: `CNS-HIAA-Executive-Summary-${reportingMonth.replace(/\s+/g, "-")}.pdf`,
+      })
+    } catch (error) {
+      console.log("[v0] PDF export failed, falling back to print:", error)
+      // Fall back to the browser print dialog so the user is never stuck.
+      window.print()
+    } finally {
+      setExporting(false)
+    }
   }
 
   return (
@@ -48,9 +72,8 @@ export function PrintToolbar({
           </h1>
           <p className="text-pretty text-sm text-muted-foreground">
             Portfolio roll-up of KPI-01 through KPI-21 · Reporting month{" "}
-            <span className="font-medium text-foreground">{reportingMonth}</span>. Use{" "}
-            <span className="font-medium text-foreground">Download PDF</span> and choose &ldquo;Save as PDF&rdquo; for
-            contract reporting.
+            <span className="font-medium text-foreground">{reportingMonth}</span>.{" "}
+            <span className="font-medium text-foreground">Download PDF</span> saves a contract-ready report file.
           </p>
           <p className="text-xs text-muted-foreground">
             Data refreshed <span className="font-medium text-foreground">{refreshedAt} AT</span>
@@ -59,11 +82,13 @@ export function PrintToolbar({
         <div className="flex items-center gap-3">
           <button
             type="button"
-            onClick={handlePrint}
-            className="inline-flex items-center gap-2 rounded-lg bg-navy px-4 py-2 text-sm font-semibold text-navy-foreground shadow-sm transition-colors hover:bg-navy/90"
+            onClick={handleDownloadPdf}
+            disabled={exporting}
+            aria-busy={exporting}
+            className="inline-flex items-center gap-2 rounded-lg bg-navy px-4 py-2 text-sm font-semibold text-navy-foreground shadow-sm transition-colors hover:bg-navy/90 disabled:pointer-events-none disabled:opacity-60"
           >
-            <FileDown className="size-4" />
-            Download PDF
+            {exporting ? <Loader2 className="size-4 animate-spin" /> : <FileDown className="size-4" />}
+            {exporting ? "Preparing PDF…" : "Download PDF"}
           </button>
           <button
             type="button"

@@ -129,6 +129,47 @@ jobs:
             cp -a public deploy/public
           fi
 
+          # ---------------------------------------------------------------
+          # THE @swc/helpers 503 FIX (heal the standalone node_modules)
+          # ---------------------------------------------------------------
+          # Next.js `output: "standalone"` traces its runtime dependency
+          # closure with @vercel/nft. That tracer MISSES several of Next's own
+          # runtime deps and copies others only partially -- e.g. @swc/helpers
+          # is present but the dynamically-required esm/*.js files are not, and
+          # tslib / scheduler are absent entirely. The bundle still boots
+          # locally (Node resolves the gaps from the surrounding workspace) but
+          # in an isolated deployment (Azure App Service) it dies on boot with:
+          #   Error: Cannot find module '.../@swc/helpers/esm/_interop_require_default.js'
+          # and the container never starts -> Azure returns 503.
+          #
+          # Fix: overlay COMPLETE copies of these packages (dereferenced) from
+          # the flat, npm-style node_modules produced by .npmrc
+          # (node-linker=hoisted), replacing nft's partial copies. Their tiny
+          # transitive closure (@swc/helpers->tslib, styled-jsx->client-only)
+          # is covered by the list below.
+          echo "Healing standalone node_modules with complete runtime packages"
+          for mod in @swc/helpers styled-jsx tslib scheduler client-only; do
+            src="node_modules/${mod}"
+            if [ ! -f "${src}/package.json" ]; then
+              echo "ERROR: runtime dependency '${mod}' not found at ${src}."
+              echo "Confirm .npmrc has 'node-linker=hoisted' and that"
+              echo "'pnpm install' ran before this step."
+              exit 1
+            fi
+            mkdir -p "deploy/node_modules/$(dirname "${mod}")"
+            rm -rf "deploy/node_modules/${mod}"
+            cp -aL "${src}" "deploy/node_modules/${mod}"
+            echo "  healed: ${mod}"
+          done
+
+          echo "Verifying healed runtime files are complete"
+          test -f deploy/node_modules/@swc/helpers/esm/_interop_require_default.js
+          test -f deploy/node_modules/@swc/helpers/package.json
+          test -f deploy/node_modules/styled-jsx/package.json
+          test -f deploy/node_modules/tslib/package.json
+          test -f deploy/node_modules/scheduler/package.json
+          test -f deploy/node_modules/client-only/package.json
+
           echo "Removing stale Azure Oryx files"
           rm -f deploy/oryx-manifest.toml
           rm -f deploy/node_modules.tar.gz
@@ -176,7 +217,6 @@ jobs:
           test -f deploy/.next/server/app/_not-found/page.js
           test -f deploy/.next/server/app/_global-error/page.js
           test -f deploy/node_modules/next/package.json
-          test -f deploy/node_modules/@swc/helpers/package.json
           test -f deploy/node_modules/pg/package.json
 
           echo "Confirming server.js is the Azure bind wrapper"
@@ -256,8 +296,10 @@ jobs:
           unzip -Z1 node-app.zip | grep -Fx "app-server.js"
           unzip -Z1 node-app.zip | grep -Fx ".next/BUILD_ID"
           unzip -Z1 node-app.zip | grep -Fx "node_modules/next/package.json"
-          unzip -Z1 node-app.zip | grep -Fx "node_modules/@swc/helpers/package.json"
           unzip -Z1 node-app.zip | grep -Fx "node_modules/pg/package.json"
+          unzip -Z1 node-app.zip | grep -Fx "node_modules/@swc/helpers/esm/_interop_require_default.js"
+          unzip -Z1 node-app.zip | grep -Fx "node_modules/tslib/package.json"
+          unzip -Z1 node-app.zip | grep -Fx "node_modules/scheduler/package.json"
 
           if unzip -Z1 node-app.zip | grep -q "^oryx-manifest.toml$"; then
             echo "ERROR: Oryx manifest unexpectedly included."
@@ -303,8 +345,10 @@ jobs:
           unzip -Z1 artifact/node-app.zip | grep -Fx "app-server.js"
           unzip -Z1 artifact/node-app.zip | grep -Fx ".next/BUILD_ID"
           unzip -Z1 artifact/node-app.zip | grep -Fx "node_modules/next/package.json"
-          unzip -Z1 artifact/node-app.zip | grep -Fx "node_modules/@swc/helpers/package.json"
           unzip -Z1 artifact/node-app.zip | grep -Fx "node_modules/pg/package.json"
+          unzip -Z1 artifact/node-app.zip | grep -Fx "node_modules/@swc/helpers/esm/_interop_require_default.js"
+          unzip -Z1 artifact/node-app.zip | grep -Fx "node_modules/tslib/package.json"
+          unzip -Z1 artifact/node-app.zip | grep -Fx "node_modules/scheduler/package.json"
 
           if unzip -Z1 artifact/node-app.zip | grep -q "^oryx-manifest.toml$"; then
             echo "ERROR: Oryx manifest unexpectedly included."
@@ -376,6 +420,23 @@ jobs:
                   "The publish profile does not contain deployment credentials."
               )
 
+          # Azure issues region-specific SCM (Kudu) hostnames, e.g.
+          # <app>-<hash>.canadaeast-01.azurewebsites.net, so the host must be
+          # read from the profile's publishUrl rather than constructed as
+          # <app>.scm.azurewebsites.net (which no longer resolves -> curl (6)).
+          publish_url = selected.attrib.get("publishUrl", "").strip()
+
+          # Normalize: drop scheme, any path, and the :port suffix.
+          if "://" in publish_url:
+              publish_url = publish_url.split("://", 1)[1]
+          publish_url = publish_url.split("/", 1)[0]
+          kudu_host = publish_url.split(":", 1)[0]
+
+          if not kudu_host:
+              raise SystemExit(
+                  "The publish profile does not contain a publishUrl (Kudu host)."
+              )
+
           github_env = os.environ["GITHUB_ENV"]
 
           with open(
@@ -385,8 +446,9 @@ jobs:
           ) as env_file:
               env_file.write(f"KUDU_USERNAME={username}\n")
               env_file.write(f"KUDU_PASSWORD={password}\n")
+              env_file.write(f"KUDU_HOST={kudu_host}\n")
 
-          print("Azure Kudu deployment credentials loaded.")
+          print(f"Azure Kudu deployment credentials loaded. Kudu host: {kudu_host}")
           PY
 
       - name: Deploy clean ZIP through Azure Kudu
@@ -397,11 +459,24 @@ jobs:
           : "${KUDU_USERNAME:?KUDU_USERNAME is unavailable}"
           : "${KUDU_PASSWORD:?KUDU_PASSWORD is unavailable}"
 
-          KUDU_HOST="hiaaexecutivereport-v2-bqcmdycyg7gthyf5.scm.canadaeast-01.azurewebsites.net"
+          # Prefer the region-aware host parsed from the publish profile's
+          # publishUrl. Fall back to the legacy pattern only if it is missing.
+          KUDU_HOST="${KUDU_HOST:-${AZURE_WEBAPP_NAME}.scm.azurewebsites.net}"
           KUDU_URL="https://${KUDU_HOST}/api/zipdeploy"
 
           echo "Deploying tested ZIP through Azure Kudu"
           echo "Kudu host: ${KUDU_HOST}"
+
+          # Fail early with a clear message if DNS cannot resolve the host,
+          # instead of a bare "curl (6)".
+          if ! getent hosts "${KUDU_HOST}" >/dev/null 2>&1 \
+             && ! nslookup "${KUDU_HOST}" >/dev/null 2>&1; then
+            echo "ERROR: Could not resolve Kudu host '${KUDU_HOST}'."
+            echo "Verify the publish profile is current (download a fresh one" \
+                 "from the App Service > Deployment Center if the app was" \
+                 "recreated or renamed)."
+            exit 1
+          fi
 
           HTTP_STATUS="$(
             curl \
@@ -432,12 +507,72 @@ jobs:
 
           echo "Azure deployment completed successfully."
 
+      - name: Verify server-side package (detect Oryx tampering)
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          : "${KUDU_USERNAME:?KUDU_USERNAME is unavailable}"
+          : "${KUDU_PASSWORD:?KUDU_PASSWORD is unavailable}"
+          KUDU_HOST="${KUDU_HOST:-${AZURE_WEBAPP_NAME}.scm.azurewebsites.net}"
+
+          # Inspect what actually landed in wwwroot. If Oryx ran, it leaves an
+          # oryx-manifest.toml and repackages node_modules, frequently dropping
+          # next / @swc/helpers -> the app crashes and Azure returns 503.
+          REMOTE_CMD='echo "--- wwwroot ---"; ls -1 /home/site/wwwroot | head -40; echo "--- checks ---"; test -f /home/site/wwwroot/server.js && echo SERVER_OK || echo SERVER_MISSING; test -f /home/site/wwwroot/node_modules/next/package.json && echo NEXT_OK || echo NEXT_MISSING; test -f /home/site/wwwroot/node_modules/@swc/helpers/package.json && echo SWC_OK || echo SWC_MISSING; test -f /home/site/wwwroot/oryx-manifest.toml && echo ORYX_RAN || echo ORYX_ABSENT'
+
+          # Kudu command API expects JSON {"command": "...", "dir": "..."}.
+          # Build the JSON body with a single-line python call (keeps YAML happy).
+          BODY="$(REMOTE_CMD="${REMOTE_CMD}" python3 -c 'import json,os; print(json.dumps({"command": os.environ["REMOTE_CMD"], "dir": "/home/site/wwwroot"}))')"
+
+          RESPONSE="$(
+            curl \
+              --silent \
+              --show-error \
+              --connect-timeout 30 \
+              --max-time 120 \
+              --user "${KUDU_USERNAME}:${KUDU_PASSWORD}" \
+              --header "Content-Type: application/json" \
+              --request POST \
+              --data "${BODY}" \
+              "https://${KUDU_HOST}/api/command" || true
+          )"
+
+          # Kudu returns JSON whose "Output" string embeds our marker tokens
+          # (SERVER_OK, NEXT_MISSING, ORYX_RAN, ...). The tokens survive as
+          # literal substrings, so we grep the raw response directly instead of
+          # parsing JSON (which avoids fragile multi-line parsing in YAML).
+          echo "Server-side wwwroot inspection (raw Kudu response):"
+          echo "${RESPONSE}"
+
+          if echo "${RESPONSE}" | grep -q "ORYX_RAN"; then
+            echo "ERROR: Oryx build ran on the server (oryx-manifest.toml present)."
+            echo "This repackages node_modules and breaks the prebuilt standalone bundle."
+            echo "FIX (Azure Portal -> App Service -> Settings -> Configuration ->"
+            echo "Application settings), then redeploy:"
+            echo "  SCM_DO_BUILD_DURING_DEPLOYMENT = false"
+            echo "  ENABLE_ORYX_BUILD              = false"
+            echo "And under General settings set the Startup Command to: node server.js"
+            exit 1
+          fi
+
+          if echo "${RESPONSE}" | grep -qE "NEXT_MISSING|SWC_MISSING|SERVER_MISSING"; then
+            echo "ERROR: The deployed bundle is incomplete on the server."
+            echo "Expected server.js + node_modules/next + node_modules/@swc/helpers."
+            echo "This is the classic symptom of Oryx build-on-deploy. Apply the app"
+            echo "settings above (SCM_DO_BUILD_DURING_DEPLOYMENT=false,"
+            echo "ENABLE_ORYX_BUILD=false) and redeploy."
+            exit 1
+          fi
+
+          echo "Server-side bundle verified: no Oryx tampering, next/@swc present."
+
       - name: Verify application startup
         shell: bash
         run: |
           set -euo pipefail
 
-          APP_URL="https://hiaaexecutivereport-v2-bqcmdycyg7gthyf5.canadaeast-01.azurewebsites.net"
+          APP_URL="https://${AZURE_WEBAPP_NAME}.azurewebsites.net"
           HEALTH_URL="${APP_URL}/api/health"
 
           echo "Waiting for the application to start..."
