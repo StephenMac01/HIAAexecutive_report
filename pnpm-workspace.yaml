@@ -1,6 +1,15 @@
+packages:
+  - "."
+
 allowBuilds:
+  core-js: true
   msw: true
   sharp: true
+
+onlyBuiltDependencies:
+  - core-js
+  - msw
+  - sharp
 
 minimumReleaseAgeExclude:
   - postcss@8.5.23
@@ -8,6 +17,7 @@ minimumReleaseAgeExclude:
   - sharp@0.35.3
 
 overrides:
+  core-js: "3.49.0"
   postcss: "8.5.25"
   ip-address: "10.2.2"
   hono: "4.12.34"
