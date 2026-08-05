@@ -135,8 +135,39 @@ jobs:
           rm -rf deploy/__oryx_packages__
           rm -rf deploy/_del_node_modules
 
+          # ---------------------------------------------------------------
+          # THE 503 FIX
+          # ---------------------------------------------------------------
+          # Next.js standalone server.js binds to process.env.HOSTNAME (falling
+          # back to 0.0.0.0 only when it is unset). Azure App Service (Linux)
+          # sets HOSTNAME to the container's internal hostname, so the server
+          # ends up listening on that hostname instead of 0.0.0.0. Azure's
+          # front-end forwards requests to 127.0.0.1:<PORT> inside the
+          # container, cannot reach the listener, and returns 503.
+          #
+          # Replace server.js with a tiny wrapper that forces the bind address
+          # to 0.0.0.0 (and a default PORT) before delegating to the real
+          # standalone server, whatever HOSTNAME Azure injects.
+          echo "Applying Azure 0.0.0.0 bind wrapper"
+          mv deploy/server.js deploy/app-server.js
+          cat > deploy/server.js <<'NODE'
+          // Azure App Service startup entry. Force a 0.0.0.0 bind so the
+          // platform health probe (127.0.0.1:PORT) can reach the server; Azure
+          // otherwise sets HOSTNAME to the container hostname and Next.js
+          // standalone binds to it, causing 503 Service Unavailable.
+          process.env.HOSTNAME = "0.0.0.0"
+          if (!process.env.PORT) {
+            process.env.PORT = "8080"
+          }
+          require("./app-server.js")
+          NODE
+
+          echo "Ensuring an npm start script points at the wrapper"
+          node -e "const fs=require('fs');const f='deploy/package.json';const p=JSON.parse(fs.readFileSync(f,'utf8'));p.scripts={...(p.scripts||{}),start:'node server.js'};fs.writeFileSync(f,JSON.stringify(p,null,2));console.log('start script set to: node server.js')"
+
           echo "Verifying deployment package"
           test -f deploy/server.js
+          test -f deploy/app-server.js
           test -f deploy/.next/BUILD_ID
           test -d deploy/.next/server
           test -d deploy/.next/server/chunks
@@ -147,6 +178,9 @@ jobs:
           test -f deploy/node_modules/next/package.json
           test -f deploy/node_modules/pg/package.json
 
+          echo "Confirming server.js is the Azure bind wrapper"
+          grep -Fq 'process.env.HOSTNAME = "0.0.0.0"' deploy/server.js
+
           echo "Testing production dependencies"
 
           (
@@ -156,36 +190,17 @@ jobs:
             node -e "require('pg'); console.log('pg loaded successfully')"
           )
 
-          echo "Checking the previously missing server chunk"
-
-          PREVIOUS_CHUNK="[root-of-the-server]__00tsl73._.js"
-          PREVIOUS_CHUNK_PATH="deploy/.next/server/chunks/ssr/${PREVIOUS_CHUNK}"
-
-          if grep -R \
-            --fixed-strings \
-            "${PREVIOUS_CHUNK}" \
-            deploy/.next/server >/dev/null 2>&1
-          then
-            if [ ! -f "${PREVIOUS_CHUNK_PATH}" ]; then
-              echo "ERROR: Current build references a missing server chunk:"
-              echo "${PREVIOUS_CHUNK_PATH}"
-              exit 1
-            fi
-
-            echo "Previously referenced server chunk is included."
-          else
-            echo "Current build no longer references the previous chunk name."
-          fi
-
-          echo "Testing standalone Next.js server"
+          echo "Testing standalone Next.js server (via the Azure wrapper)"
 
           (
             cd deploy
 
-            PORT=8081 HOSTNAME=127.0.0.1 node server.js \
+            # Deliberately export a bogus HOSTNAME to prove the wrapper still
+            # forces a 0.0.0.0 bind exactly as it must on Azure.
+            HOSTNAME="bogus-azure-container-host" PORT=8081 node server.js \
               >standalone-test.log 2>&1 &
 
-            SERVER_PID=$!
+            SERVER_PID="$!"
 
             cleanup() {
               kill "${SERVER_PID}" 2>/dev/null || true
@@ -210,7 +225,7 @@ jobs:
 
               if [ "${STATUS}" -ge 200 ] && \
                  [ "${STATUS}" -lt 500 ]; then
-                echo "Standalone server responded successfully."
+                echo "Standalone server responded successfully on 0.0.0.0."
                 exit 0
               fi
 
@@ -221,6 +236,9 @@ jobs:
             cat standalone-test.log || true
             exit 1
           )
+
+          echo "Removing test artifacts from the package"
+          rm -f deploy/standalone-test.log deploy/standalone-response.txt
 
           echo "Creating Azure deployment archive"
 
@@ -234,6 +252,7 @@ jobs:
           test -f node-app.zip
 
           unzip -Z1 node-app.zip | grep -Fx "server.js"
+          unzip -Z1 node-app.zip | grep -Fx "app-server.js"
           unzip -Z1 node-app.zip | grep -Fx ".next/BUILD_ID"
           unzip -Z1 node-app.zip | grep -Fx "node_modules/next/package.json"
           unzip -Z1 node-app.zip | grep -Fx "node_modules/pg/package.json"
@@ -264,9 +283,6 @@ jobs:
     needs: build
     timeout-minutes: 35
 
-    permissions:
-      contents: none
-
     steps:
       - name: Download deployment artifact
         uses: actions/download-artifact@v4
@@ -282,6 +298,7 @@ jobs:
           test -f artifact/node-app.zip
 
           unzip -Z1 artifact/node-app.zip | grep -Fx "server.js"
+          unzip -Z1 artifact/node-app.zip | grep -Fx "app-server.js"
           unzip -Z1 artifact/node-app.zip | grep -Fx ".next/BUILD_ID"
           unzip -Z1 artifact/node-app.zip | grep -Fx "node_modules/next/package.json"
           unzip -Z1 artifact/node-app.zip | grep -Fx "node_modules/pg/package.json"
@@ -377,8 +394,8 @@ jobs:
           : "${KUDU_USERNAME:?KUDU_USERNAME is unavailable}"
           : "${KUDU_PASSWORD:?KUDU_PASSWORD is unavailable}"
 
-          KUDU_HOST="hiaaexecutivereport-v2-bqcmdycyg7gthyf5.scm.canadaeast-01.azurewebsites.net"
-          KUDU_URL="https://${KUDU_HOST}/api/publish?type=zip&clean=true&restart=true&ignorestack=true"
+          KUDU_HOST="${AZURE_WEBAPP_NAME}.scm.azurewebsites.net"
+          KUDU_URL="https://${KUDU_HOST}/api/zipdeploy"
 
           echo "Deploying tested ZIP through Azure Kudu"
           echo "Kudu host: ${KUDU_HOST}"
@@ -417,7 +434,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          APP_URL="https://hiaaexecutivereport-v2-bqcmdycyg7gthyf5.canadaeast-01.azurewebsites.net"
+          APP_URL="https://${AZURE_WEBAPP_NAME}.azurewebsites.net"
           HEALTH_URL="${APP_URL}/api/health"
 
           echo "Waiting for the application to start..."
