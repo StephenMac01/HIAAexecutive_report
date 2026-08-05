@@ -1,697 +1,3 @@
-ChatGPT
-
-
-
-
-
-
-Invite team members
-
-Pasted text(20).txt
-Document
-
-Pasted text (2).txt
-Document
-      - name: Verify application startup
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          APP_URL="https://${{ env.AZURE_WEBAPP_NAME }}.azurewebsites.net"
-          HEALTH_URL="${APP_URL}/api/health"
-
-          echo "Waiting for the application to start..."
-          echo "Health endpoint: ${HEALTH_URL}"
-
-          for attempt in $(seq 1 30); do
-            RESPONSE_FILE="$(mktemp)"
-
-            HTTP_CODE="$(
-              curl \
-                --silent \
-                --show-error \
-                --location \
-                --connect-timeout 10 \
-                --max-time 30 \
-                --output "${RESPONSE_FILE}" \
-                --write-out "%{http_code}" \
-                "${HEALTH_URL}" || true
-            )"
-
-            echo "Attempt ${attempt}: HTTP ${HTTP_CODE}"
-
-            case "${HTTP_CODE}" in
-              200|204)
-                echo "Application started successfully."
-                cat "${RESPONSE_FILE}" || true
-                rm -f "${RESPONSE_FILE}"
-                exit 0
-                ;;
-
-              301|302|307|308)
-                echo "Application is running and returned a redirect."
-                rm -f "${RESPONSE_FILE}"
-                exit 0
-                ;;
-
-              401|403)
-                echo "Application is running, but the GitHub runner is blocked by authentication or Azure access restrictions."
-                echo "Treating this as a successful startup verification."
-                cat "${RESPONSE_FILE}" || true
-                rm -f "${RESPONSE_FILE}"
-                exit 0
-                ;;
-
-              000|502|503|504)
-                echo "Application is still starting or temporarily unavailable."
-                ;;
-
-              *)
-                echo "Application returned HTTP ${HTTP_CODE}."
-                cat "${RESPONSE_FILE}" || true
-                ;;
-            esac
-
-            rm -f "${RESPONSE_FILE}"
-            sleep 15
-          done
-
-          echo "ERROR: Application did not become reachable after 30 attempts."
-
-          echo "Collecting Azure application information..."
-          az webapp show \
-            --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
-            --name "${{ env.AZURE_WEBAPP_NAME }}" \
-            --query "{state:state,hostName:defaultHostName,enabled:enabled}" \
-            --output table || true
-
-          echo "Recent application logs:"
-          az webapp log tail \
-            --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
-            --name "${{ env.AZURE_WEBAPP_NAME }}" \
-            --timeout 60 || true
-
-          exit 1    here is the Yaml ...    please fix ... .
-
-image(236).png
-all of sudden is starts throw 503 errors  how to fix deployment
-
-image(237).png
-image(238).png
-image(239).png
-image(240).png
-Logs
-
-
-Instances
-Lookback period
-Connected!
-2026-08-04T23:13:11.0107236Z    _____
-2026-08-04T23:13:11.0108731Z   /  _  \ __________ _________   ____
-2026-08-04T23:13:11.0108765Z  /  /_\  \\___   /  |  \_  __ \_/ __ \
-2026-08-04T23:13:11.0108784Z /    |    \/    /|  |  /|  | \/\  ___/
-2026-08-04T23:13:11.0108803Z \____|__  /_____ \____/ |__|    \___  >
-2026-08-04T23:13:11.0108826Z         \/      \/                  \/
-2026-08-04T23:13:11.0108846Z A P P   S E R V I C E   O N   L I N U X
-2026-08-04T23:13:11.0108861Z
-2026-08-04T23:13:11.0108918Z Documentation    : http://aka.ms/webapp-linux
-2026-08-04T23:13:11.0108941Z NodeJS quickstart: https://aka.ms/node-qs
-2026-08-04T23:13:11.0108958Z NodeJS Version   : v22.22.2
-2026-08-04T23:13:11.0108977Z Instance Name    : lw1sdlwk0002VK
-2026-08-04T23:13:11.0109Z Instance Id      : e1d4935dd5eb48d81ddd28ae3e649f435a0a2ec61826325f41404c7f5b13aa3b
-2026-08-04T23:13:11.0109016Z
-2026-08-04T23:13:11.0109036Z Note: Any data outside '/home' is not persisted
-2026-08-04T23:13:13.9659882Z Starting OpenBSD Secure Shell server: sshd.
-2026-08-04T23:13:13.9851706Z WEBSITES_INCLUDE_CLOUD_CERTS is not set to true.
-2026-08-04T23:13:14.1923081Z Updating certificates in /etc/ssl/certs...
-2026-08-04T23:13:31.2717996Z rehash: warning: skipping duplicate certificate in azl_SSL.com_TLS_ECC_Root_CA_2022.pem
-2026-08-04T23:13:31.2726344Z rehash: warning: skipping duplicate certificate in azl_SSL.com_TLS_RSA_Root_CA_2022.pem
-2026-08-04T23:13:31.6112363Z rehash: warning: skipping ca-certificates.crt,it does not contain exactly one certificate or CRL
-2026-08-04T23:13:31.7113563Z 4 added, 0 removed; done.
-2026-08-04T23:13:31.7127692Z Running hooks in /etc/ca-certificates/update.d...
-2026-08-04T23:13:31.7313676Z done.
-2026-08-04T23:13:31.7612213Z CA certificates copied and updated successfully.
-2026-08-04T23:13:31.9637434Z Starting periodic command scheduler: cron.
-2026-08-04T23:13:32.1753388Z Found build manifest file at '/home/site/wwwroot/oryx-manifest.toml'. Deserializing it...
-2026-08-04T23:13:32.2533823Z Could not find operation ID in manifest. Generating an operation id...
-2026-08-04T23:13:32.2534313Z Build Operation ID: f9a852ce-c0ab-44bb-971f-50f93b3ed11f
-2026-08-04T23:13:32.6472394Z Environment Variables for Application Insight's IPA Codeless Configuration exists..
-2026-08-04T23:13:32.6778359Z Writing output script to '/opt/startup/startup.sh'
-2026-08-04T23:13:32.7373461Z Running #!/bin/sh
-2026-08-04T23:13:32.7374074Z
-2026-08-04T23:13:32.7374112Z # Enter the source directory to make sure the script runs where the user expects
-2026-08-04T23:13:32.7374232Z cd "/home/site/wwwroot"
-2026-08-04T23:13:32.737425Z
-2026-08-04T23:13:32.7374271Z export NODE_PATH=/usr/local/lib/node_modules:$NODE_PATH
-2026-08-04T23:13:32.737429Z if [ -z "$PORT" ]; then
-2026-08-04T23:13:32.7374307Z 		export PORT=8080
-2026-08-04T23:13:32.7374323Z fi
-2026-08-04T23:13:32.7374339Z
-2026-08-04T23:13:32.7374359Z echo Found tar.gz based node_modules.
-2026-08-04T23:13:32.7374396Z extractionCommand="tar -xzf node_modules.tar.gz -C /node_modules"
-2026-08-04T23:13:32.7374417Z echo "Removing existing modules directory from root..."
-2026-08-04T23:13:32.7374436Z rm -fr /node_modules
-2026-08-04T23:13:32.7374453Z mkdir -p /node_modules
-2026-08-04T23:13:32.7374471Z echo Extracting modules...
-2026-08-04T23:13:32.7374487Z $extractionCommand
-2026-08-04T23:13:32.7374518Z export NODE_PATH="/node_modules":$NODE_PATH
-2026-08-04T23:13:32.7374553Z export PATH=/node_modules/.bin:$PATH
-2026-08-04T23:13:32.7374572Z if [ -d node_modules ]; then
-2026-08-04T23:13:32.7374591Z     mv -f node_modules _del_node_modules || true
-2026-08-04T23:13:32.7374607Z fi
-2026-08-04T23:13:32.7374622Z
-2026-08-04T23:13:32.7374639Z if [ -d /node_modules ]; then
-2026-08-04T23:13:32.7374658Z     ln -sfn /node_modules ./node_modules
-2026-08-04T23:13:32.7374674Z fi
-2026-08-04T23:13:32.7374706Z
-2026-08-04T23:13:32.7374723Z echo "Done."
-2026-08-04T23:13:32.7661966Z PATH="$PATH:/home/site/wwwroot" node server.js
-2026-08-04T23:13:32.7850854Z Found tar.gz based node_modules.
-2026-08-04T23:13:32.7851116Z Removing existing modules directory from root...
-2026-08-04T23:13:32.8060831Z Extracting modules...
-2026-08-04T23:13:35.8248486Z Done.
-2026-08-04T23:13:37.9059448Z node:internal/modules/cjs/loader:657
-2026-08-04T23:13:37.9060203Z       throw e;
-2026-08-04T23:13:37.906024Z       ^
-2026-08-04T23:13:37.9060257Z
-2026-08-04T23:13:37.9060375Z Error: Cannot find module '/node_modules/@swc/helpers/esm/_interop_require_default.js'
-2026-08-04T23:13:37.9060398Z     at createEsmNotFoundErr (node:internal/modules/cjs/loader:1419:15)
-2026-08-04T23:13:37.9060419Z     at finalizeEsmResolution (node:internal/modules/cjs/loader:1408:15)
-2026-08-04T23:13:37.9060438Z     at resolveExports (node:internal/modules/cjs/loader:650:14)
-2026-08-04T23:13:37.9060459Z     at Function._findPath (node:internal/modules/cjs/loader:717:31)
-2026-08-04T23:13:37.9060479Z     at Function.<anonymous> (node:internal/modules/cjs/loader:1369:27)
-2026-08-04T23:13:37.9060498Z     at /node_modules/next/dist/server/require-hook.js:68:36
-2026-08-04T23:13:37.9060541Z     at defaultResolveImpl (node:internal/modules/cjs/loader:1025:19)
-2026-08-04T23:13:37.9060561Z     at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1030:22)
-2026-08-04T23:13:37.9060581Z     at Function._load (node:internal/modules/cjs/loader:1192:37)
-2026-08-04T23:13:37.9060601Z     at TracingChannel.traceSync (node:diagnostics_channel:328:14) {
-2026-08-04T23:13:37.9060619Z   code: 'MODULE_NOT_FOUND',
-2026-08-04T23:13:37.9060638Z   path: '/node_modules/@swc/helpers'
-2026-08-04T23:13:37.9060655Z }
-2026-08-04T23:13:37.9249641Z
-2026-08-04T23:13:37.9249815Z Node.js v22.22.2
-2026-08-04T23:14:18.6790722Z    _____
-2026-08-04T23:14:18.6791346Z   /  _  \ __________ _________   ____
-2026-08-04T23:14:18.6791541Z  /  /_\  \\___   /  |  \_  __ \_/ __ \
-2026-08-04T23:14:18.6791559Z /    |    \/    /|  |  /|  | \/\  ___/
-2026-08-04T23:14:18.6791577Z \____|__  /_____ \____/ |__|    \___  >
-2026-08-04T23:14:18.6791593Z         \/      \/                  \/
-2026-08-04T23:14:18.6791608Z A P P   S E R V I C E   O N   L I N U X
-2026-08-04T23:14:18.6791622Z
-2026-08-04T23:14:18.6791641Z Documentation    : http://aka.ms/webapp-linux
-2026-08-04T23:14:18.6791658Z NodeJS quickstart: https://aka.ms/node-qs
-2026-08-04T23:14:18.6791673Z NodeJS Version   : v22.22.2
-2026-08-04T23:14:18.679169Z Instance Name    : lw1sdlwk0002VK
-2026-08-04T23:14:18.6791722Z Instance Id      : e1d4935dd5eb48d81ddd28ae3e649f435a0a2ec61826325f41404c7f5b13aa3b
-2026-08-04T23:14:18.6791735Z
-2026-08-04T23:14:18.6791752Z Note: Any data outside '/home' is not persisted
-2026-08-04T23:14:21.4293971Z Starting OpenBSD Secure Shell server: sshd.
-
-image(241).png
-
-Pasted text(21).txt
-Document
-ok still the same are we even close>>> 503 started showing up! 
-
-image(242).png
-
-image(243).png
-image(244).png
-image(245).png
-image(246).png
-image(247).png
-
-image(248).png
-image(250).png
-image(251).png
-image(252).png
-image(253).png
-image(254).png
-both are SCM_DO_BUILD_DURING_DEPLOYMENT = false
-ENABLE_ORYX_BUILD = false     Stack: Node 22 LTS
-Startup command: node server.js   Overview → Restarthttps://hiaaexecutivereport-v2-bqcmdycyg7gthyf5.canadaeast-01.azurewebsites.net/ 
-
-Today 8:43 AM
-image(255).png
-if was ti explain this issue to a consultant what are we not able to do? 
-
-image(256).png
-
-
-Pasted text(24).txt
-Document
-here is the yaml can you please make changes and give back the full script for pasting .. 
-
-image(257).png
-image(258).png
-
-image(259).png
-Connected!
-2026-08-05T12:23:04.5583572Z    _____
-2026-08-05T12:23:04.5584075Z   /  _  \ __________ _________   ____
-2026-08-05T12:23:04.5584095Z  /  /_\  \\___   /  |  \_  __ \_/ __ \
-2026-08-05T12:23:04.558411Z /    |    \/    /|  |  /|  | \/\  ___/
-2026-08-05T12:23:04.5584126Z \____|__  /_____ \____/ |__|    \___  >
-2026-08-05T12:23:04.5584141Z         \/      \/                  \/
-2026-08-05T12:23:04.5584155Z A P P   S E R V I C E   O N   L I N U X
-2026-08-05T12:23:04.5584171Z
-2026-08-05T12:23:04.5584274Z Documentation    : http://aka.ms/webapp-linux
-2026-08-05T12:23:04.5584293Z NodeJS quickstart: https://aka.ms/node-qs
-2026-08-05T12:23:04.5584307Z NodeJS Version   : v22.22.2
-2026-08-05T12:23:04.5584322Z Instance Name    : lw1sdlwk0002VK
-2026-08-05T12:23:04.5584342Z Instance Id      : e1d4935dd5eb48d81ddd28ae3e649f435a0a2ec61826325f41404c7f5b13aa3b
-2026-08-05T12:23:04.5584354Z
-2026-08-05T12:23:04.558437Z Note: Any data outside '/home' is not persisted
-2026-08-05T12:23:11.656935Z Starting OpenBSD Secure Shell server: sshd.
-2026-08-05T12:23:11.6775897Z WEBSITES_INCLUDE_CLOUD_CERTS is not set to true.
-2026-08-05T12:23:11.7265905Z Updating certificates in /etc/ssl/certs...
-2026-08-05T12:23:36.8443402Z rehash: warning: skipping duplicate certificate in azl_SSL.com_TLS_ECC_Root_CA_2022.pem
-2026-08-05T12:23:36.8544092Z rehash: warning: skipping duplicate certificate in azl_SSL.com_TLS_RSA_Root_CA_2022.pem
-2026-08-05T12:23:37.3915987Z rehash: warning: skipping ca-certificates.crt,it does not contain exactly one certificate or CRL
-2026-08-05T12:23:37.4516172Z 4 added, 0 removed; done.
-2026-08-05T12:23:37.4522521Z Running hooks in /etc/ca-certificates/update.d...
-2026-08-05T12:23:37.4704263Z done.
-2026-08-05T12:23:37.4917964Z CA certificates copied and updated successfully.
-2026-08-05T12:23:37.8332642Z Starting periodic command scheduler: cron.
-2026-08-05T12:23:38.3436007Z Found build manifest file at '/home/site/wwwroot/oryx-manifest.toml'. Deserializing it...
-2026-08-05T12:23:38.3723935Z Could not find operation ID in manifest. Generating an operation id...
-2026-08-05T12:23:38.3724196Z Build Operation ID: 5fdd5112-702f-40a2-a5f5-de38f00d8691
-2026-08-05T12:23:39.2295132Z Environment Variables for Application Insight's IPA Codeless Configuration exists..
-2026-08-05T12:23:39.2779459Z Writing output script to '/opt/startup/startup.sh'
-2026-08-05T12:23:39.3992002Z Running #!/bin/sh
-2026-08-05T12:23:39.3992451Z
-2026-08-05T12:23:39.3992483Z # Enter the source directory to make sure the script runs where the user expects
-2026-08-05T12:23:39.3992501Z cd "/home/site/wwwroot"
-2026-08-05T12:23:39.3992516Z
-2026-08-05T12:23:39.3992533Z export NODE_PATH=/usr/local/lib/node_modules:$NODE_PATH
-2026-08-05T12:23:39.3992547Z if [ -z "$PORT" ]; then
-2026-08-05T12:23:39.399256Z 		export PORT=8080
-2026-08-05T12:23:39.3992573Z fi
-2026-08-05T12:23:39.3992585Z
-2026-08-05T12:23:39.3992603Z echo Found tar.gz based node_modules.
-2026-08-05T12:23:39.3992621Z extractionCommand="tar -xzf node_modules.tar.gz -C /node_modules"
-2026-08-05T12:23:39.399273Z echo "Removing existing modules directory from root..."
-2026-08-05T12:23:39.3992747Z rm -fr /node_modules
-2026-08-05T12:23:39.399276Z mkdir -p /node_modules
-2026-08-05T12:23:39.3992775Z echo Extracting modules...
-2026-08-05T12:23:39.3992788Z $extractionCommand
-2026-08-05T12:23:39.3992802Z export NODE_PATH="/node_modules":$NODE_PATH
-2026-08-05T12:23:39.3992817Z export PATH=/node_modules/.bin:$PATH
-2026-08-05T12:23:39.3992832Z if [ -d node_modules ]; then
-2026-08-05T12:23:39.3992847Z     mv -f node_modules _del_node_modules || true
-2026-08-05T12:23:39.3992859Z fi
-2026-08-05T12:23:39.3992871Z
-2026-08-05T12:23:39.3992886Z if [ -d /node_modules ]; then
-2026-08-05T12:23:39.39929Z     ln -sfn /node_modules ./node_modules
-2026-08-05T12:23:39.3992912Z fi
-2026-08-05T12:23:39.3992925Z
-2026-08-05T12:23:39.3992962Z echo "Done."
-2026-08-05T12:23:39.4075651Z PATH="$PATH:/home/site/wwwroot" node server.js
-2026-08-05T12:23:39.4582946Z Found tar.gz based node_modules.
-2026-08-05T12:23:39.4684716Z Removing existing modules directory from root...
-2026-08-05T12:23:39.4980391Z Extracting modules...
-2026-08-05T12:23:44.5482897Z Done.
-2026-08-05T12:23:47.3717904Z node:internal/modules/cjs/loader:657
-2026-08-05T12:23:47.3718146Z       throw e;
-2026-08-05T12:23:47.3718166Z       ^
-2026-08-05T12:23:47.3718182Z
-2026-08-05T12:23:47.3718203Z Error: Cannot find module '/node_modules/@swc/helpers/esm/_interop_require_default.js'
-2026-08-05T12:23:47.3719425Z     at createEsmNotFoundErr (node:internal/modules/cjs/loader:1419:15)
-2026-08-05T12:23:47.3719452Z     at finalizeEsmResolution (node:internal/modules/cjs/loader:1408:15)
-2026-08-05T12:23:47.3719471Z     at resolveExports (node:internal/modules/cjs/loader:650:14)
-2026-08-05T12:23:47.3719487Z     at Function._findPath (node:internal/modules/cjs/loader:717:31)
-2026-08-05T12:23:47.3719504Z     at Function.<anonymous> (node:internal/modules/cjs/loader:1369:27)
-2026-08-05T12:23:47.3719519Z     at /node_modules/next/dist/server/require-hook.js:68:36
-2026-08-05T12:23:47.3719585Z     at defaultResolveImpl (node:internal/modules/cjs/loader:1025:19)
-2026-08-05T12:23:47.3719731Z     at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1030:22)
-2026-08-05T12:23:47.371975Z     at Function._load (node:internal/modules/cjs/loader:1192:37)
-2026-08-05T12:23:47.3719766Z     at TracingChannel.traceSync (node:diagnostics_channel:328:14) {
-2026-08-05T12:23:47.3719781Z   code: 'MODULE_NOT_FOUND',
-2026-08-05T12:23:47.3719796Z   path: '/node_modules/@swc/helpers'
-2026-08-05T12:23:47.3719809Z }
-2026-08-05T12:23:47.3719987Z
-2026-08-05T12:23:47.3720004Z Node.js v22.22.2
-2026-08-05T12:29:11.215578Z    _____
-2026-08-05T12:29:11.2156252Z   /  _  \ __________ _________   ____
-2026-08-05T12:29:11.2156279Z  /  /_\  \\___   /  |  \_  __ \_/ __ \
-2026-08-05T12:29:11.2156296Z /    |    \/    /|  |  /|  | \/\  ___/
-2026-08-05T12:29:11.2156311Z \____|__  /_____ \____/ |__|    \___  >
-2026-08-05T12:29:11.2156326Z         \/      \/                  \/
-2026-08-05T12:29:11.2156428Z A P P   S E R V I C E   O N   L I N U X
-2026-08-05T12:29:11.2156443Z
-2026-08-05T12:29:11.2156458Z Documentation    : http://aka.ms/webapp-linux
-2026-08-05T12:29:11.2156473Z NodeJS quickstart: https://aka.ms/node-qs
-2026-08-05T12:29:11.2156487Z NodeJS Version   : v22.22.2
-2026-08-05T12:29:11.2156503Z Instance Name    : lw1sdlwk0002VK
-2026-08-05T12:29:11.2156522Z Instance Id      : e1d4935dd5eb48d81ddd28ae3e649f435a0a2ec61826325f41404c7f5b13aa3b
-2026-08-05T12:29:11.2156535Z
-2026-08-05T12:29:11.2156551Z Note: Any data outside '/home' is not persisted
-2026-08-05T12:29:15.8250275Z Starting OpenBSD Secure Shell server: sshd.
-
-Worked for 17s
-We now have definitive proof of the failure:
-
-Azure is still transforming the deployment into an Oryx-style node_modules.tar.gz, then starting from that incomplete archive. The application crashes before it can listen on the web port, so Azure returns 503.
-
-Also, one GitHub screenshot shows the health check still using the old generic hostname:
-
-That particular run was using an older workflow revision. The latest textual output uses the correct regional hostname.
-
-The clean fix: run directly from the ZIP
-In Azure Portal, go to:
-
-Add:
-
-Keep:
-
-Delete this setting entirely:
-
-Do not merely hide or leave its prior value. Delete the row, apply the settings, and restart the application.
-
-With WEBSITE_RUN_FROM_PACKAGE=1, Azure mounts the uploaded ZIP directly as /home/site/wwwroot rather than extracting and modifying its contents. Microsoft specifically recommends this for prebuilt ZIP applications and notes that it prevents partial or inconsistent deployments. 
-
-Important limitation
-Running from package makes /home/site/wwwroot read-only. Your application must not write runtime data, uploaded files, caches, or generated files inside the project directory. Use /home/data, external storage, or your database instead. 
-
-Your existing data directory may need review if the application writes into it.
-
-Then clean the old deployment
-Stop the App Service first.
-
-Open Azure SSH and run:
-
-cd /home/site/wwwroot
-
-rm -rf .next
-rm -rf node_modules
-rm -rf _del_node_modules
-rm -rf __oryx_packages__
-
-rm -f node_modules.tar.gz
-rm -f oryx-manifest.toml
-rm -f server.js
-rm -f app-server.js
-rm -f package.json
-rm -f standalone-response.txt
-rm -f standalone-test.log
-
-ls -la
-Then:
-
-Apply WEBSITE_RUN_FROM_PACKAGE=1.
-
-Restart the App Service.
-
-Run a new GitHub workflow from main, rather than rerunning an older workflow execution.
-
-What success should look like
-After deployment, /home/site/wwwroot will be mounted from the ZIP and may appear read-only. You should no longer see Azure creating:
-
-The startup logs should no longer contain:
-
-Instead, node server.js should load dependencies directly from the ZIP-mounted node_modules.
-
-Why the current deployment fails despite green build checks
-The GitHub artifact contains the dependencies—the workflow verifies node_modules/next/package.json. But the deployment process subsequently replaces that directory with:
-
-and creates an incomplete compressed dependency archive. Your screenshots prove that this transformation occurs after the build artifact is produced.
-
-WEBSITE_RUN_FROM_PACKAGE=1 removes that extraction/transformation stage: Azure stores the ZIP under /home/data/SitePackages and mounts it directly as the application root. 
-
-
-image(260).png
-The job is failing in the deployment verification step, and the logs point to Azure Oryx build-on-deploy still running on the App Service, which is modifying the uploaded ZIP after your workflow already produced a valid standalone Next.js bundle.
-
-What the logs show
-The failure message is explicit:
-
-ERROR: Oryx build ran on the server (oryx-manifest.toml present).
-This repackages node_modules and breaks the prebuilt standalone bundle.
-It also warns that the deployed bundle can be incomplete:
-Expected server.js + node_modules/next + node_modules/@swc/helpers.
-That matches the workflow’s own checks in .github/workflows/azure-webapps-node.yml:
-
-It verifies the ZIP contains server.js, app-server.js, .next/BUILD_ID, node_modules/next/package.json, and node_modules/pg/package.json.
-Then it checks the live server via Kudu and fails if it finds oryx-manifest.toml or missing runtime files.
-Root cause
-Azure App Service is likely rebuilding the app during deployment, even though the workflow is already deploying a prebuilt standalone app.
-
-The workflow comments already identify the fix:
-
-SCM_DO_BUILD_DURING_DEPLOYMENT = false
-ENABLE_ORYX_BUILD = false
-Startup command should be node server.js
-Solution
-Set these App Service settings in Azure, then redeploy:
-
-Application settings
-SCM_DO_BUILD_DURING_DEPLOYMENT = false
-ENABLE_ORYX_BUILD = false
-General settings
-Startup Command: node server.js
-Why this fixes it
-Your ZIP is already prepared as a complete standalone deployment. If Azure runs Oryx again, it can:
-
-create oryx-manifest.toml
-rewrite node_modules
-drop or alter needed packages like next or @swc/helpers
-That is why the workflow detects the server-side bundle as broken.
-
-Relevant workflow location
-The failing logic and the recommended fix are in:
-
-.github/workflows/azure-webapps-node.yml
-Specifically:
-
-the deployment verification around the Kudu inspection
-the Oryx tampering check in the “Verify server-side package” step
-Optional code-level improvement
-If you want to reduce confusion in future deploys, you can also make the deployment more explicit by ensuring the App Service always starts with the wrapper in the ZIP:
-
-JSON
-"scripts": {
-  "start": "node server.js"
-}
-That is already being injected into deploy/package.json by the workflow, so the main fix is still the Azure App Service configuration.
-
-Bottom line
-This is not a build artifact problem in GitHub Actions. The artifact is being prepared correctly. The failure is caused by Azure redeploying/rebuilding it with Oryx. Disable Oryx build during deployment, set the startup command to node server.js, and redeploy.   I have done this multiple times .. what is the new answer
-
-Worked for 16s
-You are right to reject the same answer again. The new answer is that changing those two App Service settings is not enough in your current deployment path.
-
-Your own verification now proves Azure is still producing:
-
-after the upload. So the next fix is to stop deploying through the custom Kudu /api/zipdeploy call and deploy the ZIP as a run-from-package artifact instead.
-
-With WEBSITE_RUN_FROM_PACKAGE=1, Azure stores the ZIP under /home/data/SitePackages and mounts it directly as read-only wwwroot, rather than extracting and repackaging the bundle. That is the behavior Microsoft documents for prebuilt ZIP deployments. 
-
-What changes now
-In Azure App Service application settings, use:
-
-Delete this setting entirely:
-
-Do not keep it set to true, blank, or hidden. Remove the row.
-
-Keep:
-
-Then change the GitHub workflow deployment step so it no longer calls Kudu manually.
-
-Replace the custom Kudu deployment steps
-Delete these workflow steps:
-
-- name: Read Azure publish-profile credentials
-- name: Deploy clean ZIP through Azure Kudu
-- name: Verify server-side package (detect Oryx tampering)
-Replace all three with:
-
-      - name: Deploy package to Azure App Service
-        uses: azure/webapps-deploy@v3
-        with:
-          app-name: ${{ env.AZURE_WEBAPP_NAME }}
-          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
-          package: artifact/node-app.zip
-The official Azure action accepts the web-app name, publish profile, and ZIP package directly. 
-
-Replace the startup verification URL
-Keep the regional hostname explicitly:
-
-      - name: Verify application startup
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          APP_URL="https://hiaaexecutivereport-v2-bqcmdycyg7gthyf5.canadaeast-01.azurewebsites.net"
-          HEALTH_URL="${APP_URL}/api/health"
-
-          echo "Waiting for the application to start..."
-          echo "Testing: ${HEALTH_URL}"
-
-          for attempt in $(seq 1 30); do
-            RESPONSE_FILE="$(mktemp)"
-
-            STATUS="$(
-              curl \
-                --silent \
-                --show-error \
-                --location \
-                --connect-timeout 10 \
-                --max-time 30 \
-                --output "${RESPONSE_FILE}" \
-                --write-out "%{http_code}" \
-                "${HEALTH_URL}" || true
-            )"
-
-            if [ -z "${STATUS}" ]; then
-              STATUS="000"
-            fi
-
-            echo "Attempt ${attempt}: HTTP ${STATUS}"
-
-            case "${STATUS}" in
-              200|201|202|204)
-                echo "Application started successfully."
-                cat "${RESPONSE_FILE}" || true
-                rm -f "${RESPONSE_FILE}"
-                exit 0
-                ;;
-
-              301|302|303|307|308|401|403)
-                echo "Application is reachable."
-                cat "${RESPONSE_FILE}" || true
-                rm -f "${RESPONSE_FILE}"
-                exit 0
-                ;;
-
-              404)
-                echo "Health endpoint is missing; testing the application root."
-
-                ROOT_STATUS="$(
-                  curl \
-                    --silent \
-                    --show-error \
-                    --location \
-                    --connect-timeout 10 \
-                    --max-time 30 \
-                    --output "${RESPONSE_FILE}" \
-                    --write-out "%{http_code}" \
-                    "${APP_URL}/" || true
-                )"
-
-                if [ -z "${ROOT_STATUS}" ]; then
-                  ROOT_STATUS="000"
-                fi
-
-                echo "Root response: HTTP ${ROOT_STATUS}"
-
-                case "${ROOT_STATUS}" in
-                  200|201|202|204|301|302|303|307|308|401|403)
-                    echo "Application root is reachable."
-                    rm -f "${RESPONSE_FILE}"
-                    exit 0
-                    ;;
-                esac
-                ;;
-
-              000|502|503|504)
-                echo "Application is still starting or unavailable."
-                ;;
-
-              *)
-                echo "Unexpected HTTP ${STATUS}."
-                cat "${RESPONSE_FILE}" || true
-                ;;
-            esac
-
-            rm -f "${RESPONSE_FILE}"
-            sleep 15
-          done
-
-          echo "ERROR: Application did not become reachable."
-          exit 1
-Why the old verification step must be removed
-With WEBSITE_RUN_FROM_PACKAGE=1, /home/site/wwwroot becomes a mounted read-only package. The deployment ZIP is stored in /home/data/SitePackages, not deployed as ordinary mutable files. Therefore, a Kudu verification step that expects normal extracted files or tries to detect server-side file changes is no longer the right test. 
-
-Confirm run-from-package is actually active
-After a new deployment, open Azure SSH and run:
-
-ls -la /home/data/SitePackages
-cat /home/data/SitePackages/packagename.txt
-mount | grep /home/site/wwwroot || true
-You should see:
-
-a ZIP file under /home/data/SitePackages;
-
-packagename.txt naming that ZIP;
-
-/home/site/wwwroot mounted read-only.
-
-You should not base success on deleting oryx-manifest.toml manually anymore.
-
-Commit and push
-git add .github/workflows/azure-webapps-node.yml
-git commit -m "Deploy Next.js using Azure run from package"
-git push origin main
-The real change is now:
-
-becomes:
-
-That changes the deployment mechanism rather than repeating the same Oryx settings that Azure has already ignored in your current flow.
-
-
-
-Pasted text(25).txt
-Document
-here is the current Yaml ... please correct and give back to paste .. 
-
-I corrected the workflow to:
-
-remove the custom Kudu credential parsing and /api/zipdeploy calls;
-
-remove the server-side Oryx-tampering inspection step;
-
-deploy using azure/webapps-deploy@v3;
-
-verify that next, pg, and @swc/helpers are inside the actual ZIP;
-
-use the correct regional application hostname;
-
-keep your standalone server wrapper and build validation.
-
-Your previous YAML was still using custom Kudu deployment and server-side inspection beginning in the deploy job. 
-
-
-azure-webapps-node.yml
-
-Replace the entire contents of:
-
-with the downloaded file.
-
-Before deploying, Azure App Service must have these application settings:
-
-Delete ENABLE_NODE_MODULES_ZIP if it still exists.
-
-Keep:
-
-Then push:
-
-git add .github/workflows/azure-webapps-node.yml
-git commit -m "Deploy Next.js using Azure run from package"
-git push origin main
-The generated YAML was parsed successfully and contains valid build and deploy jobs.
-
-
-
-
-
-
-
-
-Library
-/
-azure-webapps-node.yml
-
-
 name: Build and deploy CNS HIAA Dashboard to Azure
 
 on:
@@ -829,8 +135,39 @@ jobs:
           rm -rf deploy/__oryx_packages__
           rm -rf deploy/_del_node_modules
 
+          # ---------------------------------------------------------------
+          # THE 503 FIX
+          # ---------------------------------------------------------------
+          # Next.js standalone server.js binds to process.env.HOSTNAME (falling
+          # back to 0.0.0.0 only when it is unset). Azure App Service (Linux)
+          # sets HOSTNAME to the container's internal hostname, so the server
+          # ends up listening on that hostname instead of 0.0.0.0. Azure's
+          # front-end forwards requests to 127.0.0.1:<PORT> inside the
+          # container, cannot reach the listener, and returns 503.
+          #
+          # Replace server.js with a tiny wrapper that forces the bind address
+          # to 0.0.0.0 (and a default PORT) before delegating to the real
+          # standalone server, whatever HOSTNAME Azure injects.
+          echo "Applying Azure 0.0.0.0 bind wrapper"
+          mv deploy/server.js deploy/app-server.js
+          cat > deploy/server.js <<'NODE'
+          // Azure App Service startup entry. Force a 0.0.0.0 bind so the
+          // platform health probe (127.0.0.1:PORT) can reach the server; Azure
+          // otherwise sets HOSTNAME to the container hostname and Next.js
+          // standalone binds to it, causing 503 Service Unavailable.
+          process.env.HOSTNAME = "0.0.0.0"
+          if (!process.env.PORT) {
+            process.env.PORT = "8080"
+          }
+          require("./app-server.js")
+          NODE
+
+          echo "Ensuring an npm start script points at the wrapper"
+          node -e "const fs=require('fs');const f='deploy/package.json';const p=JSON.parse(fs.readFileSync(f,'utf8'));p.scripts={...(p.scripts||{}),start:'node server.js'};fs.writeFileSync(f,JSON.stringify(p,null,2));console.log('start script set to: node server.js')"
+
           echo "Verifying deployment package"
           test -f deploy/server.js
+          test -f deploy/app-server.js
           test -f deploy/.next/BUILD_ID
           test -d deploy/.next/server
           test -d deploy/.next/server/chunks
@@ -839,7 +176,11 @@ jobs:
           test -f deploy/.next/server/app/_not-found/page.js
           test -f deploy/.next/server/app/_global-error/page.js
           test -f deploy/node_modules/next/package.json
+          test -f deploy/node_modules/@swc/helpers/package.json
           test -f deploy/node_modules/pg/package.json
+
+          echo "Confirming server.js is the Azure bind wrapper"
+          grep -Fq 'process.env.HOSTNAME = "0.0.0.0"' deploy/server.js
 
           echo "Testing production dependencies"
 
@@ -850,36 +191,17 @@ jobs:
             node -e "require('pg'); console.log('pg loaded successfully')"
           )
 
-          echo "Checking the previously missing server chunk"
-
-          PREVIOUS_CHUNK="[root-of-the-server]__00tsl73._.js"
-          PREVIOUS_CHUNK_PATH="deploy/.next/server/chunks/ssr/${PREVIOUS_CHUNK}"
-
-          if grep -R \
-            --fixed-strings \
-            "${PREVIOUS_CHUNK}" \
-            deploy/.next/server >/dev/null 2>&1
-          then
-            if [ ! -f "${PREVIOUS_CHUNK_PATH}" ]; then
-              echo "ERROR: Current build references a missing server chunk:"
-              echo "${PREVIOUS_CHUNK_PATH}"
-              exit 1
-            fi
-
-            echo "Previously referenced server chunk is included."
-          else
-            echo "Current build no longer references the previous chunk name."
-          fi
-
-          echo "Testing standalone Next.js server"
+          echo "Testing standalone Next.js server (via the Azure wrapper)"
 
           (
             cd deploy
 
-            PORT=8081 HOSTNAME=127.0.0.1 node server.js \
+            # Deliberately export a bogus HOSTNAME to prove the wrapper still
+            # forces a 0.0.0.0 bind exactly as it must on Azure.
+            HOSTNAME="bogus-azure-container-host" PORT=8081 node server.js \
               >standalone-test.log 2>&1 &
 
-            SERVER_PID=$!
+            SERVER_PID="$!"
 
             cleanup() {
               kill "${SERVER_PID}" 2>/dev/null || true
@@ -904,7 +226,7 @@ jobs:
 
               if [ "${STATUS}" -ge 200 ] && \
                  [ "${STATUS}" -lt 500 ]; then
-                echo "Standalone server responded successfully."
+                echo "Standalone server responded successfully on 0.0.0.0."
                 exit 0
               fi
 
@@ -915,6 +237,9 @@ jobs:
             cat standalone-test.log || true
             exit 1
           )
+
+          echo "Removing test artifacts from the package"
+          rm -f deploy/standalone-test.log deploy/standalone-response.txt
 
           echo "Creating Azure deployment archive"
 
@@ -928,8 +253,10 @@ jobs:
           test -f node-app.zip
 
           unzip -Z1 node-app.zip | grep -Fx "server.js"
+          unzip -Z1 node-app.zip | grep -Fx "app-server.js"
           unzip -Z1 node-app.zip | grep -Fx ".next/BUILD_ID"
           unzip -Z1 node-app.zip | grep -Fx "node_modules/next/package.json"
+          unzip -Z1 node-app.zip | grep -Fx "node_modules/@swc/helpers/package.json"
           unzip -Z1 node-app.zip | grep -Fx "node_modules/pg/package.json"
 
           if unzip -Z1 node-app.zip | grep -q "^oryx-manifest.toml$"; then
@@ -958,9 +285,6 @@ jobs:
     needs: build
     timeout-minutes: 35
 
-    permissions:
-      contents: none
-
     steps:
       - name: Download deployment artifact
         uses: actions/download-artifact@v4
@@ -976,8 +300,10 @@ jobs:
           test -f artifact/node-app.zip
 
           unzip -Z1 artifact/node-app.zip | grep -Fx "server.js"
+          unzip -Z1 artifact/node-app.zip | grep -Fx "app-server.js"
           unzip -Z1 artifact/node-app.zip | grep -Fx ".next/BUILD_ID"
           unzip -Z1 artifact/node-app.zip | grep -Fx "node_modules/next/package.json"
+          unzip -Z1 artifact/node-app.zip | grep -Fx "node_modules/@swc/helpers/package.json"
           unzip -Z1 artifact/node-app.zip | grep -Fx "node_modules/pg/package.json"
 
           if unzip -Z1 artifact/node-app.zip | grep -q "^oryx-manifest.toml$"; then
@@ -1072,7 +398,7 @@ jobs:
           : "${KUDU_PASSWORD:?KUDU_PASSWORD is unavailable}"
 
           KUDU_HOST="hiaaexecutivereport-v2-bqcmdycyg7gthyf5.scm.canadaeast-01.azurewebsites.net"
-          KUDU_URL="https://${KUDU_HOST}/api/publish?type=zip&clean=true&restart=true&ignorestack=true"
+          KUDU_URL="https://${KUDU_HOST}/api/zipdeploy"
 
           echo "Deploying tested ZIP through Azure Kudu"
           echo "Kudu host: ${KUDU_HOST}"
