@@ -176,6 +176,7 @@ jobs:
           test -f deploy/.next/server/app/_not-found/page.js
           test -f deploy/.next/server/app/_global-error/page.js
           test -f deploy/node_modules/next/package.json
+          test -f deploy/node_modules/@swc/helpers/package.json
           test -f deploy/node_modules/pg/package.json
 
           echo "Confirming server.js is the Azure bind wrapper"
@@ -255,6 +256,7 @@ jobs:
           unzip -Z1 node-app.zip | grep -Fx "app-server.js"
           unzip -Z1 node-app.zip | grep -Fx ".next/BUILD_ID"
           unzip -Z1 node-app.zip | grep -Fx "node_modules/next/package.json"
+          unzip -Z1 node-app.zip | grep -Fx "node_modules/@swc/helpers/package.json"
           unzip -Z1 node-app.zip | grep -Fx "node_modules/pg/package.json"
 
           if unzip -Z1 node-app.zip | grep -q "^oryx-manifest.toml$"; then
@@ -301,6 +303,7 @@ jobs:
           unzip -Z1 artifact/node-app.zip | grep -Fx "app-server.js"
           unzip -Z1 artifact/node-app.zip | grep -Fx ".next/BUILD_ID"
           unzip -Z1 artifact/node-app.zip | grep -Fx "node_modules/next/package.json"
+          unzip -Z1 artifact/node-app.zip | grep -Fx "node_modules/@swc/helpers/package.json"
           unzip -Z1 artifact/node-app.zip | grep -Fx "node_modules/pg/package.json"
 
           if unzip -Z1 artifact/node-app.zip | grep -q "^oryx-manifest.toml$"; then
@@ -394,7 +397,7 @@ jobs:
           : "${KUDU_USERNAME:?KUDU_USERNAME is unavailable}"
           : "${KUDU_PASSWORD:?KUDU_PASSWORD is unavailable}"
 
-          KUDU_HOST="${AZURE_WEBAPP_NAME}.scm.azurewebsites.net"
+          KUDU_HOST="hiaaexecutivereport-v2-bqcmdycyg7gthyf5.scm.canadaeast-01.azurewebsites.net"
           KUDU_URL="https://${KUDU_HOST}/api/zipdeploy"
 
           echo "Deploying tested ZIP through Azure Kudu"
@@ -434,7 +437,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          APP_URL="https://${AZURE_WEBAPP_NAME}.azurewebsites.net"
+          APP_URL="https://hiaaexecutivereport-v2-bqcmdycyg7gthyf5.canadaeast-01.azurewebsites.net"
           HEALTH_URL="${APP_URL}/api/health"
 
           echo "Waiting for the application to start..."
