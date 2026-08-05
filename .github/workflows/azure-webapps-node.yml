@@ -176,7 +176,6 @@ jobs:
           test -f deploy/.next/server/app/_not-found/page.js
           test -f deploy/.next/server/app/_global-error/page.js
           test -f deploy/node_modules/next/package.json
-          test -f deploy/node_modules/@swc/helpers/package.json
           test -f deploy/node_modules/pg/package.json
 
           echo "Confirming server.js is the Azure bind wrapper"
@@ -256,7 +255,6 @@ jobs:
           unzip -Z1 node-app.zip | grep -Fx "app-server.js"
           unzip -Z1 node-app.zip | grep -Fx ".next/BUILD_ID"
           unzip -Z1 node-app.zip | grep -Fx "node_modules/next/package.json"
-          unzip -Z1 node-app.zip | grep -Fx "node_modules/@swc/helpers/package.json"
           unzip -Z1 node-app.zip | grep -Fx "node_modules/pg/package.json"
 
           if unzip -Z1 node-app.zip | grep -q "^oryx-manifest.toml$"; then
@@ -303,7 +301,6 @@ jobs:
           unzip -Z1 artifact/node-app.zip | grep -Fx "app-server.js"
           unzip -Z1 artifact/node-app.zip | grep -Fx ".next/BUILD_ID"
           unzip -Z1 artifact/node-app.zip | grep -Fx "node_modules/next/package.json"
-          unzip -Z1 artifact/node-app.zip | grep -Fx "node_modules/@swc/helpers/package.json"
           unzip -Z1 artifact/node-app.zip | grep -Fx "node_modules/pg/package.json"
 
           if unzip -Z1 artifact/node-app.zip | grep -q "^oryx-manifest.toml$"; then
@@ -376,6 +373,23 @@ jobs:
                   "The publish profile does not contain deployment credentials."
               )
 
+          # Azure issues region-specific SCM (Kudu) hostnames, e.g.
+          # <app>-<hash>.canadaeast-01.azurewebsites.net, so the host must be
+          # read from the profile's publishUrl rather than constructed as
+          # <app>.scm.azurewebsites.net (which no longer resolves -> curl (6)).
+          publish_url = selected.attrib.get("publishUrl", "").strip()
+
+          # Normalize: drop scheme, any path, and the :port suffix.
+          if "://" in publish_url:
+              publish_url = publish_url.split("://", 1)[1]
+          publish_url = publish_url.split("/", 1)[0]
+          kudu_host = publish_url.split(":", 1)[0]
+
+          if not kudu_host:
+              raise SystemExit(
+                  "The publish profile does not contain a publishUrl (Kudu host)."
+              )
+
           github_env = os.environ["GITHUB_ENV"]
 
           with open(
@@ -385,8 +399,9 @@ jobs:
           ) as env_file:
               env_file.write(f"KUDU_USERNAME={username}\n")
               env_file.write(f"KUDU_PASSWORD={password}\n")
+              env_file.write(f"KUDU_HOST={kudu_host}\n")
 
-          print("Azure Kudu deployment credentials loaded.")
+          print(f"Azure Kudu deployment credentials loaded. Kudu host: {kudu_host}")
           PY
 
       - name: Deploy clean ZIP through Azure Kudu
@@ -397,11 +412,24 @@ jobs:
           : "${KUDU_USERNAME:?KUDU_USERNAME is unavailable}"
           : "${KUDU_PASSWORD:?KUDU_PASSWORD is unavailable}"
 
-          KUDU_HOST="hiaaexecutivereport-v2-bqcmdycyg7gthyf5.scm.canadaeast-01.azurewebsites.net"
+          # Prefer the region-aware host parsed from the publish profile's
+          # publishUrl. Fall back to the legacy pattern only if it is missing.
+          KUDU_HOST="${KUDU_HOST:-${AZURE_WEBAPP_NAME}.scm.azurewebsites.net}"
           KUDU_URL="https://${KUDU_HOST}/api/zipdeploy"
 
           echo "Deploying tested ZIP through Azure Kudu"
           echo "Kudu host: ${KUDU_HOST}"
+
+          # Fail early with a clear message if DNS cannot resolve the host,
+          # instead of a bare "curl (6)".
+          if ! getent hosts "${KUDU_HOST}" >/dev/null 2>&1 \
+             && ! nslookup "${KUDU_HOST}" >/dev/null 2>&1; then
+            echo "ERROR: Could not resolve Kudu host '${KUDU_HOST}'."
+            echo "Verify the publish profile is current (download a fresh one" \
+                 "from the App Service > Deployment Center if the app was" \
+                 "recreated or renamed)."
+            exit 1
+          fi
 
           HTTP_STATUS="$(
             curl \
@@ -437,7 +465,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          APP_URL="https://hiaaexecutivereport-v2-bqcmdycyg7gthyf5.canadaeast-01.azurewebsites.net"
+          APP_URL="https://${AZURE_WEBAPP_NAME}.azurewebsites.net"
           HEALTH_URL="${APP_URL}/api/health"
 
           echo "Waiting for the application to start..."
