@@ -460,6 +460,66 @@ jobs:
 
           echo "Azure deployment completed successfully."
 
+      - name: Verify server-side package (detect Oryx tampering)
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          : "${KUDU_USERNAME:?KUDU_USERNAME is unavailable}"
+          : "${KUDU_PASSWORD:?KUDU_PASSWORD is unavailable}"
+          KUDU_HOST="${KUDU_HOST:-${AZURE_WEBAPP_NAME}.scm.azurewebsites.net}"
+
+          # Inspect what actually landed in wwwroot. If Oryx ran, it leaves an
+          # oryx-manifest.toml and repackages node_modules, frequently dropping
+          # next / @swc/helpers -> the app crashes and Azure returns 503.
+          REMOTE_CMD='echo "--- wwwroot ---"; ls -1 /home/site/wwwroot | head -40; echo "--- checks ---"; test -f /home/site/wwwroot/server.js && echo SERVER_OK || echo SERVER_MISSING; test -f /home/site/wwwroot/node_modules/next/package.json && echo NEXT_OK || echo NEXT_MISSING; test -f /home/site/wwwroot/node_modules/@swc/helpers/package.json && echo SWC_OK || echo SWC_MISSING; test -f /home/site/wwwroot/oryx-manifest.toml && echo ORYX_RAN || echo ORYX_ABSENT'
+
+          # Kudu command API expects JSON {"command": "...", "dir": "..."}.
+          # Build the JSON body with a single-line python call (keeps YAML happy).
+          BODY="$(REMOTE_CMD="${REMOTE_CMD}" python3 -c 'import json,os; print(json.dumps({"command": os.environ["REMOTE_CMD"], "dir": "/home/site/wwwroot"}))')"
+
+          RESPONSE="$(
+            curl \
+              --silent \
+              --show-error \
+              --connect-timeout 30 \
+              --max-time 120 \
+              --user "${KUDU_USERNAME}:${KUDU_PASSWORD}" \
+              --header "Content-Type: application/json" \
+              --request POST \
+              --data "${BODY}" \
+              "https://${KUDU_HOST}/api/command" || true
+          )"
+
+          # Kudu returns JSON whose "Output" string embeds our marker tokens
+          # (SERVER_OK, NEXT_MISSING, ORYX_RAN, ...). The tokens survive as
+          # literal substrings, so we grep the raw response directly instead of
+          # parsing JSON (which avoids fragile multi-line parsing in YAML).
+          echo "Server-side wwwroot inspection (raw Kudu response):"
+          echo "${RESPONSE}"
+
+          if echo "${RESPONSE}" | grep -q "ORYX_RAN"; then
+            echo "ERROR: Oryx build ran on the server (oryx-manifest.toml present)."
+            echo "This repackages node_modules and breaks the prebuilt standalone bundle."
+            echo "FIX (Azure Portal -> App Service -> Settings -> Configuration ->"
+            echo "Application settings), then redeploy:"
+            echo "  SCM_DO_BUILD_DURING_DEPLOYMENT = false"
+            echo "  ENABLE_ORYX_BUILD              = false"
+            echo "And under General settings set the Startup Command to: node server.js"
+            exit 1
+          fi
+
+          if echo "${RESPONSE}" | grep -qE "NEXT_MISSING|SWC_MISSING|SERVER_MISSING"; then
+            echo "ERROR: The deployed bundle is incomplete on the server."
+            echo "Expected server.js + node_modules/next + node_modules/@swc/helpers."
+            echo "This is the classic symptom of Oryx build-on-deploy. Apply the app"
+            echo "settings above (SCM_DO_BUILD_DURING_DEPLOYMENT=false,"
+            echo "ENABLE_ORYX_BUILD=false) and redeploy."
+            exit 1
+          fi
+
+          echo "Server-side bundle verified: no Oryx tampering, next/@swc present."
+
       - name: Verify application startup
         shell: bash
         run: |
