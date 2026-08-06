@@ -126,12 +126,24 @@ jobs:
           echo "Healing standalone runtime packages"
 
           for mod in \
-            @swc/helpers \
+             @swc/helpers \
             @next/env \
             styled-jsx \
             tslib \
             scheduler \
-            client-only
+            client-only \
+            pg \
+            pg-types \
+            pg-protocol \
+            pg-pool \
+            pgpass \
+            postgres-array \
+            postgres-bytea \
+            postgres-date \
+            postgres-interval \
+            split2 \
+            packet-reader \
+            buffer-writer
           do
             echo "Locating runtime dependency: ${mod}"
 
