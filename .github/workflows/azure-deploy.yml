@@ -142,8 +142,6 @@ jobs:
             postgres-date \
             postgres-interval \
             split2 \
-            packet-reader \
-            buffer-writer
           do
             echo "Locating runtime dependency: ${mod}"
 
