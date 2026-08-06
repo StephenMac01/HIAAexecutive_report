@@ -133,63 +133,53 @@ jobs:
             scheduler \
             client-only
           do
-            package_entry="$(
-              MOD="${mod}" node - <<'NODE'
-          const fs = require("fs")
-          const path = require("path")
+            echo "Locating runtime dependency: ${mod}"
 
-          const mod = process.env.MOD
+            package_json=""
 
-          try {
-            let resolved
+            # First try the normal root-level package path.
+            if [ -f "node_modules/${mod}/package.json" ]; then
+              package_json="node_modules/${mod}/package.json"
+            fi
 
-            try {
-              resolved = require.resolve(`${mod}/package.json`)
-            } catch {
-              resolved = require.resolve(mod)
-            }
+            # If pnpm did not hoist it, search the pnpm virtual store.
+            if [ -z "${package_json}" ]; then
+              package_json="$(
+                find node_modules/.pnpm \
+                  -type f \
+                  -path "*/node_modules/${mod}/package.json" \
+                  -print \
+                  -quit 2>/dev/null || true
+              )"
+            fi
 
-            let current = fs.statSync(resolved).isDirectory()
-              ? resolved
-              : path.dirname(resolved)
-
-            while (true) {
-              const packageJson = path.join(current, "package.json")
-
-              if (fs.existsSync(packageJson)) {
-                process.stdout.write(packageJson)
-                process.exit(0)
-              }
-
-              const parent = path.dirname(current)
-
-              if (parent === current) {
-                process.exit(1)
-              }
-
-              current = parent
-            }
-          } catch {
-            process.exit(1)
-          }
-          NODE
-            )"
-
-            if [ -z "${package_entry}" ] || [ ! -f "${package_entry}" ]; then
-              echo "ERROR: Unable to resolve runtime dependency '${mod}'."
+            if [ -z "${package_json}" ] || [ ! -f "${package_json}" ]; then
+              echo "ERROR: Unable to locate runtime dependency '${mod}'."
+              echo "Searching for possible matches:"
+              find node_modules \
+                -type f \
+                -path "*/${mod}/package.json" \
+                -print 2>/dev/null \
+                | head -20 || true
               exit 1
             fi
 
-            package_dir="$(dirname "${package_entry}")"
+            package_dir="$(dirname "${package_json}")"
             target_dir="deploy/node_modules/${mod}"
 
-            echo "Copying ${mod} from ${package_dir}"
+            echo "Copying ${mod}"
+            echo "  source: ${package_dir}"
+            echo "  target: ${target_dir}"
 
             rm -rf "${target_dir}"
             mkdir -p "$(dirname "${target_dir}")"
             cp -aL "${package_dir}" "${target_dir}"
 
-            test -f "${target_dir}/package.json"
+            if [ ! -f "${target_dir}/package.json" ]; then
+              echo "ERROR: ${mod} was not copied successfully."
+              exit 1
+            fi
+
             echo "  healed: ${mod}"
           done
 
@@ -295,6 +285,11 @@ jobs:
           unzip -Z1 node-app.zip | grep -Fx "node_modules/next/package.json"
           unzip -Z1 node-app.zip | grep -Fx "node_modules/pg/package.json"
           unzip -Z1 node-app.zip | grep -Fx "node_modules/@swc/helpers/esm/_interop_require_default.js"
+          unzip -Z1 node-app.zip | grep -Fx "node_modules/@next/env/package.json"
+          unzip -Z1 node-app.zip | grep -Fx "node_modules/styled-jsx/package.json"
+          unzip -Z1 node-app.zip | grep -Fx "node_modules/tslib/package.json"
+          unzip -Z1 node-app.zip | grep -Fx "node_modules/scheduler/package.json"
+          unzip -Z1 node-app.zip | grep -Fx "node_modules/client-only/package.json"
 
           if unzip -Z1 node-app.zip | grep -q "^oryx-manifest.toml$"; then
             echo "ERROR: Oryx manifest unexpectedly included."
@@ -340,6 +335,11 @@ jobs:
           unzip -Z1 artifact/node-app.zip | grep -Fx "node_modules/next/package.json"
           unzip -Z1 artifact/node-app.zip | grep -Fx "node_modules/pg/package.json"
           unzip -Z1 artifact/node-app.zip | grep -Fx "node_modules/@swc/helpers/esm/_interop_require_default.js"
+          unzip -Z1 artifact/node-app.zip | grep -Fx "node_modules/@next/env/package.json"
+          unzip -Z1 artifact/node-app.zip | grep -Fx "node_modules/styled-jsx/package.json"
+          unzip -Z1 artifact/node-app.zip | grep -Fx "node_modules/tslib/package.json"
+          unzip -Z1 artifact/node-app.zip | grep -Fx "node_modules/scheduler/package.json"
+          unzip -Z1 artifact/node-app.zip | grep -Fx "node_modules/client-only/package.json"
 
       - name: Read Azure publish-profile credentials
         shell: bash
