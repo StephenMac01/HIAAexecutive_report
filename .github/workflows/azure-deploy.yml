@@ -126,7 +126,7 @@ jobs:
           echo "Healing standalone runtime packages"
 
           for mod in \
-             @swc/helpers \
+            @swc/helpers \
             @next/env \
             styled-jsx \
             tslib \
@@ -141,18 +141,16 @@ jobs:
             postgres-bytea \
             postgres-date \
             postgres-interval \
-            split2 \
+            split2
           do
             echo "Locating runtime dependency: ${mod}"
 
             package_json=""
 
-            # First try the normal root-level package path.
             if [ -f "node_modules/${mod}/package.json" ]; then
               package_json="node_modules/${mod}/package.json"
             fi
 
-            # If pnpm did not hoist it, search the pnpm virtual store.
             if [ -z "${package_json}" ]; then
               package_json="$(
                 find node_modules/.pnpm \
@@ -166,11 +164,13 @@ jobs:
             if [ -z "${package_json}" ] || [ ! -f "${package_json}" ]; then
               echo "ERROR: Unable to locate runtime dependency '${mod}'."
               echo "Searching for possible matches:"
+
               find node_modules \
                 -type f \
                 -path "*/${mod}/package.json" \
                 -print 2>/dev/null \
                 | head -20 || true
+
               exit 1
             fi
 
@@ -194,6 +194,7 @@ jobs:
           done
 
           echo "Verifying healed runtime files"
+
           test -f deploy/node_modules/@swc/helpers/esm/_interop_require_default.js
           test -f deploy/node_modules/@swc/helpers/package.json
           test -f deploy/node_modules/@next/env/package.json
@@ -201,6 +202,16 @@ jobs:
           test -f deploy/node_modules/tslib/package.json
           test -f deploy/node_modules/scheduler/package.json
           test -f deploy/node_modules/client-only/package.json
+          test -f deploy/node_modules/pg/package.json
+          test -f deploy/node_modules/pg-types/package.json
+          test -f deploy/node_modules/pg-protocol/package.json
+          test -f deploy/node_modules/pg-pool/package.json
+          test -f deploy/node_modules/pgpass/package.json
+          test -f deploy/node_modules/postgres-array/package.json
+          test -f deploy/node_modules/postgres-bytea/package.json
+          test -f deploy/node_modules/postgres-date/package.json
+          test -f deploy/node_modules/postgres-interval/package.json
+          test -f deploy/node_modules/split2/package.json
 
           echo "Removing stale Oryx artifacts from package"
           rm -f deploy/oryx-manifest.toml
@@ -236,6 +247,11 @@ jobs:
             cd deploy
             node -e "require('next'); console.log('next loaded successfully')"
             node -e "require('pg'); console.log('pg loaded successfully')"
+            node -e "require('pg-types'); console.log('pg-types loaded successfully')"
+            node -e "require('pg-protocol'); console.log('pg-protocol loaded successfully')"
+            node -e "require('pg-pool'); console.log('pg-pool loaded successfully')"
+            node -e "require('pgpass'); console.log('pgpass loaded successfully')"
+            node -e "require('pg'); console.log('pg and dependencies loaded successfully')"
             node -e "require('@swc/helpers/esm/_interop_require_default.js'); console.log('@swc/helpers loaded successfully')"
           )
 
@@ -300,6 +316,15 @@ jobs:
           unzip -Z1 node-app.zip | grep -Fx "node_modules/tslib/package.json"
           unzip -Z1 node-app.zip | grep -Fx "node_modules/scheduler/package.json"
           unzip -Z1 node-app.zip | grep -Fx "node_modules/client-only/package.json"
+          unzip -Z1 node-app.zip | grep -Fx "node_modules/pg-types/package.json"
+          unzip -Z1 node-app.zip | grep -Fx "node_modules/pg-protocol/package.json"
+          unzip -Z1 node-app.zip | grep -Fx "node_modules/pg-pool/package.json"
+          unzip -Z1 node-app.zip | grep -Fx "node_modules/pgpass/package.json"
+          unzip -Z1 node-app.zip | grep -Fx "node_modules/postgres-array/package.json"
+          unzip -Z1 node-app.zip | grep -Fx "node_modules/postgres-bytea/package.json"
+          unzip -Z1 node-app.zip | grep -Fx "node_modules/postgres-date/package.json"
+          unzip -Z1 node-app.zip | grep -Fx "node_modules/postgres-interval/package.json"
+          unzip -Z1 node-app.zip | grep -Fx "node_modules/split2/package.json"
 
           if unzip -Z1 node-app.zip | grep -q "^oryx-manifest.toml$"; then
             echo "ERROR: Oryx manifest unexpectedly included."
@@ -350,6 +375,15 @@ jobs:
           unzip -Z1 artifact/node-app.zip | grep -Fx "node_modules/tslib/package.json"
           unzip -Z1 artifact/node-app.zip | grep -Fx "node_modules/scheduler/package.json"
           unzip -Z1 artifact/node-app.zip | grep -Fx "node_modules/client-only/package.json"
+          unzip -Z1 artifact/node-app.zip | grep -Fx "node_modules/pg-types/package.json"
+          unzip -Z1 artifact/node-app.zip | grep -Fx "node_modules/pg-protocol/package.json"
+          unzip -Z1 artifact/node-app.zip | grep -Fx "node_modules/pg-pool/package.json"
+          unzip -Z1 artifact/node-app.zip | grep -Fx "node_modules/pgpass/package.json"
+          unzip -Z1 artifact/node-app.zip | grep -Fx "node_modules/postgres-array/package.json"
+          unzip -Z1 artifact/node-app.zip | grep -Fx "node_modules/postgres-bytea/package.json"
+          unzip -Z1 artifact/node-app.zip | grep -Fx "node_modules/postgres-date/package.json"
+          unzip -Z1 artifact/node-app.zip | grep -Fx "node_modules/postgres-interval/package.json"
+          unzip -Z1 artifact/node-app.zip | grep -Fx "node_modules/split2/package.json"
 
       - name: Read Azure publish-profile credentials
         shell: bash
