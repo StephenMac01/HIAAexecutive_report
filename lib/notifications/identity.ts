@@ -79,7 +79,7 @@ async function resolveIdentity(): Promise<CurrentUser> {
       id: entra.oid,
       email: entra.email,
       displayName: entra.displayName,
-      role: entra.role,
+      role: entra.role ?? "viewer",
       authSource: "entra",
       appRoles: entra.appRoles,
     };
