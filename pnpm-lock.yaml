@@ -55,6 +55,9 @@ importers:
       pg:
         specifier: ^8.22.0
         version: 8.22.0
+      pg-int8:
+        specifier: 1.0.1
+        version: 1.0.1
       react:
         specifier: 19.2.4
         version: 19.2.4
@@ -88,6 +91,9 @@ importers:
       xlsx:
         specifier: https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz
         version: https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz
+      xtend:
+        specifier: 4.0.2
+        version: 4.0.2
     devDependencies:
       '@tailwindcss/postcss':
         specifier: ^4.3.3
