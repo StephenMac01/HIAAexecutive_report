@@ -1,56 +1,79 @@
-import "server-only"
+import "server-only";
 
-import { eq } from "drizzle-orm"
-import { db, isDatabaseConfigured } from "@/lib/db"
-import { appUser } from "@/lib/db/schema"
-import { readEntraIdentity } from "@/lib/auth/easy-auth"
-import type { CurrentUser, Role } from "./types"
+import { eq } from "drizzle-orm";
+import { db, isDatabaseConfigured } from "@/lib/db";
+import { appUser } from "@/lib/db/schema";
+import { readEntraIdentity } from "@/lib/auth/easy-auth";
+import type { CurrentUser, Role } from "./types";
 
 /**
- * Pluggable identity resolution.
+ * Identity resolution:
  *
- * Production: Microsoft Entra ID via Azure App Service "Easy Auth". The
- * platform validates the login and injects the principal as request headers,
- * which `readEntraIdentity()` decodes. The identity is keyed by the Entra
- * object id (`oid`) and the role comes from Entra App Roles.
+ * Production:
+ *   Microsoft Entra ID through Azure App Service Authentication.
  *
- * Local dev / v0 preview: no Easy Auth in front of the app, so we fall back to
- * a configurable dev identity from env vars. Everything downstream
- * (subscriptions, deliveries, audit) keys off `CurrentUser.id`, so the rest of
- * the system is identical in both modes.
+ * Local development:
+ *   Configurable development identity.
+ *
+ * Production must never silently fall back to a hard-coded user.
  */
 
 const DEV_DEFAULTS = {
   id: "dev-user-001",
-  email: "stephen.macneil@hiaa.example",
-  displayName: "Stephen MacNeil",
+  email: "developer@localhost",
+  displayName: "Development User",
   role: "admin" as Role,
-}
+};
 
 function normalizeRole(value: string | undefined, fallback: Role): Role {
-  return value && ["viewer", "manager", "admin"].includes(value) ? (value as Role) : fallback
+  return value && ["viewer", "manager", "admin"].includes(value)
+    ? (value as Role)
+    : fallback;
+}
+
+function isLocalDevelopment(): boolean {
+  return (
+    process.env.NODE_ENV === "development" ||
+    process.env.ALLOW_DEV_IDENTITY === "true"
+  );
 }
 
 function devIdentity(): CurrentUser {
   const role = normalizeRole(
-    process.env.NOTIFY_DEV_USER_ROLE || process.env.DEV_IDENTITY_ROLE,
+    process.env.NOTIFY_DEV_USER_ROLE ?? process.env.DEV_IDENTITY_ROLE,
     DEV_DEFAULTS.role,
-  )
+  );
+
   return {
-    id: process.env.NOTIFY_DEV_USER_ID || process.env.DEV_IDENTITY_ID || DEV_DEFAULTS.id,
-    email: process.env.NOTIFY_DEV_USER_EMAIL || process.env.DEV_IDENTITY_EMAIL || DEV_DEFAULTS.email,
-    displayName: process.env.NOTIFY_DEV_USER_NAME || process.env.DEV_IDENTITY_NAME || DEV_DEFAULTS.displayName,
+    id:
+      process.env.NOTIFY_DEV_USER_ID ??
+      process.env.DEV_IDENTITY_ID ??
+      DEV_DEFAULTS.id,
+
+    email:
+      process.env.NOTIFY_DEV_USER_EMAIL ??
+      process.env.DEV_IDENTITY_EMAIL ??
+      DEV_DEFAULTS.email,
+
+    displayName:
+      process.env.NOTIFY_DEV_USER_NAME ??
+      process.env.DEV_IDENTITY_NAME ??
+      DEV_DEFAULTS.displayName,
+
     role,
     authSource: "dev",
-  }
+  };
 }
 
 /**
- * Resolve the raw identity for this request: Entra when Easy Auth is present,
- * otherwise the dev fallback.
+ * Resolve the identity attached to the current request.
+ *
+ * In Azure, missing Easy Auth headers are treated as an authentication
+ * configuration failure—not as permission to impersonate the development user.
  */
 async function resolveIdentity(): Promise<CurrentUser> {
-  const entra = await readEntraIdentity()
+  const entra = await readEntraIdentity();
+
   if (entra) {
     return {
       id: entra.oid,
@@ -59,68 +82,108 @@ async function resolveIdentity(): Promise<CurrentUser> {
       role: entra.role,
       authSource: "entra",
       appRoles: entra.appRoles,
-    }
+    };
   }
-  return devIdentity()
+
+  if (isLocalDevelopment()) {
+    return devIdentity();
+  }
+
+  throw new Error(
+    [
+      "Authenticated Entra identity was not found.",
+      "Verify Azure App Service Authentication is enabled,",
+      "unauthenticated requests require authentication,",
+      "and Easy Auth identity headers are reaching Next.js.",
+    ].join(" "),
+  );
 }
 
 /**
- * Resolve the current user and ensure a matching `app_user` row exists.
+ * Resolve the current user and ensure that a corresponding app_user row exists.
  *
- * Role-of-record rules:
- *  - Entra sign-in: Entra App Roles are authoritative. The DB row is synced to
- *    the role from the directory on every request.
- *  - Dev fallback: the in-app/DB role is preserved (never downgraded by the env
- *    default), so manual role assignment in the app survives.
+ * Rules:
  *
- * Falls back to the in-memory identity when the database is unavailable so the
- * UI still renders (deliveries simply won't be queryable).
+ * - Entra object ID is the stable database user ID.
+ * - Existing database roles are preserved unless Entra supplied an explicit
+ *   application role.
+ * - New users default to viewer when no recognized Entra app role exists.
+ * - Profile fields are refreshed whenever the person signs in.
  */
 export async function getCurrentUser(): Promise<CurrentUser> {
-  const identity = await resolveIdentity()
-  if (!isDatabaseConfigured()) return identity
+  const identity = await resolveIdentity();
+
+  if (!isDatabaseConfigured()) {
+    return identity;
+  }
 
   try {
-    const existing = await db.select().from(appUser).where(eq(appUser.id, identity.id)).limit(1)
+    const existingRows = await db
+      .select()
+      .from(appUser)
+      .where(eq(appUser.id, identity.id))
+      .limit(1);
 
-    if (existing.length === 0) {
+    const existing = existingRows[0];
+
+    if (!existing) {
       await db.insert(appUser).values({
         id: identity.id,
         email: identity.email,
         displayName: identity.displayName,
-        role: identity.role,
-      })
-      return identity
+        role: identity.role ?? "viewer",
+      });
+
+      return identity;
     }
 
-    if (identity.authSource === "entra") {
-      // Entra is the source of truth — keep profile + role in sync.
-      await db
-        .update(appUser)
-        .set({
-          email: identity.email,
-          displayName: identity.displayName,
-          role: identity.role,
-          updatedAt: new Date(),
-        })
-        .where(eq(appUser.id, identity.id))
-      return identity
-    }
+    /*
+     * Preserve the database role unless Entra actually supplied one of the
+     * application's recognized app roles.
+     *
+     * This prevents every ordinary Entra user from overwriting a manually
+     * assigned manager/admin role with "viewer".
+     */
+    const hasExplicitEntraRole =
+      identity.authSource === "entra" &&
+      Array.isArray(identity.appRoles) &&
+      identity.appRoles.length > 0;
 
-    // Dev fallback: refresh profile fields but keep the DB-assigned role.
+    const effectiveRole: Role = hasExplicitEntraRole
+      ? identity.role
+      : ((existing.role as Role) ?? "viewer");
+
     await db
       .update(appUser)
-      .set({ email: identity.email, displayName: identity.displayName, updatedAt: new Date() })
-      .where(eq(appUser.id, identity.id))
-    return { ...identity, role: (existing[0].role as Role) ?? identity.role }
-  } catch (err) {
-    const cause = err instanceof Error && "cause" in err ? (err as { cause?: unknown }).cause : undefined
-    console.log(
-      "[v0] getCurrentUser upsert failed:",
-      err instanceof Error ? err.message : err,
+      .set({
+        email: identity.email,
+        displayName: identity.displayName,
+        role: effectiveRole,
+        updatedAt: new Date(),
+      })
+      .where(eq(appUser.id, identity.id));
+
+    return {
+      ...identity,
+      role: effectiveRole,
+    };
+  } catch (error) {
+    const cause =
+      error instanceof Error && "cause" in error
+        ? (error as { cause?: unknown }).cause
+        : undefined;
+
+    console.error(
+      "[identity] getCurrentUser database synchronization failed:",
+      error instanceof Error ? error.message : error,
       "| cause:",
       cause instanceof Error ? cause.message : cause,
-    )
+    );
+
+    /*
+     * Authentication succeeded even though profile persistence failed.
+     * Return the actual Entra identity rather than replacing it.
+     */
+    return identity;
   }
-  return identity
 }
