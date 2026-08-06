@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { revalidateTag } from "next/cache";
-import { Client } from "pg";
+import { headers } from "next/headers";
 import { KPIS, getKpi } from "@/lib/kpi-registry";
 import { isSharePointConfigured } from "@/lib/sharepoint/graph-client";
 import {
@@ -14,25 +14,28 @@ export const dynamic = "force-dynamic";
  * Operational health + readiness endpoint.
  *
  * GET /api/health
- *   Lightweight health check covering:
- *   - application process
- *   - KPI registry
- *   - cache revalidation
- *   - SharePoint configuration
- *
- * GET /api/health?database=1
- *   Adds a live PostgreSQL connection and schema check.
+ *   Lightweight liveness/readiness check.
  *
  * GET /api/health?deep=1
- *   Runs a live SharePoint download and parse check for KPI-01.
+ *   Runs one live SharePoint download and workbook parse for kpi-01.
  *
- * The database and deep checks require the REVALIDATE_SECRET through either:
+ * GET /api/health?identity=1
+ *   Reports whether Azure App Service Easy Auth identity headers are present
+ *   and which claim types were supplied.
+ *
+ * GET /api/health?deep=1&identity=1
+ *   Runs both protected diagnostics.
+ *
+ * Protected diagnostics require REVALIDATE_SECRET through either:
+ *
  *   x-revalidate-secret: <secret>
  *
  * or:
+ *
  *   ?secret=<secret>
  *
- * Never returns passwords, tokens, connection strings, or workbook contents.
+ * This endpoint never returns passwords, tokens, connection strings,
+ * identity values, workbook contents, or claim values.
  */
 
 type Check = {
@@ -41,24 +44,17 @@ type Check = {
   detail: string;
 };
 
-type DatabaseReadiness = {
-  ok: boolean;
-  databaseName?: string;
-  databaseUser?: string;
-  currentSchema?: string;
-  searchPath?: string;
-  serverAddress?: string;
-  serverPort?: number;
-  tables?: {
-    appUser: boolean;
-    delivery: boolean;
-    alertEvent: boolean;
-  };
-  error?: string;
+type EasyAuthDiagnostic = {
+  principalHeaderPresent: boolean;
+  principalIdPresent: boolean;
+  principalNamePresent: boolean;
+  identityProvider: string | null;
+  principalDecoded: boolean;
+  claimTypes: string[];
 };
 
 function envPresence() {
-  // Report presence only — never return secret values.
+  // Report presence only—never return values.
   const required = [
     "SHAREPOINT_TENANT_ID",
     "SHAREPOINT_CLIENT_ID",
@@ -99,85 +95,76 @@ function isAuthorized(request: Request): boolean {
   return provided === secret;
 }
 
-async function diagnoseDatabase(): Promise<DatabaseReadiness> {
-  const connectionString = process.env.DATABASE_URL;
+/**
+ * Safely inspect Easy Auth headers.
+ *
+ * This returns only:
+ * - whether headers exist;
+ * - whether the principal can be decoded;
+ * - claim type names.
+ *
+ * It does not return claim values, user IDs, names, email addresses, or tokens.
+ */
+async function diagnoseEasyAuth(): Promise<EasyAuthDiagnostic> {
+  const requestHeaders = await headers();
 
-  if (!connectionString) {
-    return {
-      ok: false,
-      error: "DATABASE_URL is not configured",
-    };
+  const principalHeader = requestHeaders.get("x-ms-client-principal");
+
+  const principalIdPresent = Boolean(
+    requestHeaders.get("x-ms-client-principal-id"),
+  );
+
+  const principalNamePresent = Boolean(
+    requestHeaders.get("x-ms-client-principal-name"),
+  );
+
+  const identityProvider = requestHeaders.get("x-ms-client-principal-idp");
+
+  let principalDecoded = false;
+  let claimTypes: string[] = [];
+
+  if (principalHeader) {
+    try {
+      const decoded = JSON.parse(
+        Buffer.from(principalHeader, "base64").toString("utf8"),
+      ) as {
+        claims?: Array<{
+          typ?: string;
+          val?: string;
+        }>;
+      };
+
+      principalDecoded = true;
+
+      claimTypes = Array.from(
+        new Set(
+          (decoded.claims ?? [])
+            .map((claim) => claim.typ)
+            .filter((type): type is string => Boolean(type)),
+        ),
+      ).sort();
+    } catch {
+      principalDecoded = false;
+    }
   }
 
-  const client = new Client({
-    connectionString,
-  });
-
-  try {
-    await client.connect();
-
-    const result = await client.query<{
-      database_name: string;
-      database_user: string;
-      current_schema: string | null;
-      search_path: string;
-      server_address: string | null;
-      server_port: number;
-      app_user: string | null;
-      delivery: string | null;
-      alert_event: string | null;
-    }>(`
-      SELECT
-        current_database() AS database_name,
-        current_user AS database_user,
-        current_schema() AS current_schema,
-        current_setting('search_path') AS search_path,
-        inet_server_addr()::text AS server_address,
-        inet_server_port() AS server_port,
-        to_regclass('public.app_user')::text AS app_user,
-        to_regclass('public.delivery')::text AS delivery,
-        to_regclass('public.alert_event')::text AS alert_event
-    `);
-
-    const row = result.rows[0];
-
-    const tables = {
-      appUser: Boolean(row.app_user),
-      delivery: Boolean(row.delivery),
-      alertEvent: Boolean(row.alert_event),
-    };
-
-    const allTablesPresent =
-      tables.appUser && tables.delivery && tables.alertEvent;
-
-    return {
-      ok: allTablesPresent,
-      databaseName: row.database_name,
-      databaseUser: row.database_user,
-      currentSchema: row.current_schema ?? undefined,
-      searchPath: row.search_path,
-      serverAddress: row.server_address ?? undefined,
-      serverPort: row.server_port,
-      tables,
-      ...(!allTablesPresent
-        ? {
-            error:
-              "Database connection succeeded, but one or more required tables are missing",
-          }
-        : {}),
-    };
-  } catch (error) {
-    return {
-      ok: false,
-      error: error instanceof Error ? error.message : "Unknown database error",
-    };
-  } finally {
-    await client.end().catch(() => undefined);
-  }
+  return {
+    principalHeaderPresent: Boolean(principalHeader),
+    principalIdPresent,
+    principalNamePresent,
+    identityProvider: identityProvider ?? null,
+    principalDecoded,
+    claimTypes,
+  };
 }
 
 export async function GET(request: Request) {
   const checks: Check[] = [];
+  const requestUrl = new URL(request.url);
+
+  const deepRequested = requestUrl.searchParams.get("deep") === "1";
+
+  const identityRequested = requestUrl.searchParams.get("identity") === "1";
 
   checks.push({
     name: "process",
@@ -219,55 +206,62 @@ export async function GET(request: Request) {
 
   checks.push({
     name: "sharepoint-config",
-    // SharePoint remains optional because the app has local fallback files.
+    // SharePoint remains optional because local fallback files exist.
     ok: true,
     detail: isSharePointConfigured()
       ? "configured"
       : "not configured (serving local fallback workbooks)",
   });
 
-  const requestUrl = new URL(request.url);
-  const deep = requestUrl.searchParams.get("deep");
-  const databaseCheck = requestUrl.searchParams.get("database");
-
-  let sharePointReadiness: Record<string, unknown> | undefined;
-  let databaseReadiness: DatabaseReadiness | undefined;
-
-  if (deep || databaseCheck) {
-    if (!isAuthorized(request)) {
-      return NextResponse.json(
-        {
-          error:
-            "Unauthorized: deep and database readiness checks require REVALIDATE_SECRET",
-        },
-        { status: 401 },
-      );
-    }
+  /*
+   * Any live or identity diagnostic is protected.
+   */
+  if ((deepRequested || identityRequested) && !isAuthorized(request)) {
+    return NextResponse.json(
+      {
+        error:
+          "Unauthorized: protected health diagnostics require REVALIDATE_SECRET",
+      },
+      { status: 401 },
+    );
   }
 
-  if (databaseCheck) {
-    databaseReadiness = await diagnoseDatabase();
+  let readiness: Record<string, unknown> | undefined;
+
+  let identity: EasyAuthDiagnostic | undefined;
+
+  /*
+   * Easy Auth diagnostic.
+   */
+  if (identityRequested) {
+    identity = await diagnoseEasyAuth();
+
+    const identityOk =
+      identity.principalHeaderPresent || identity.principalIdPresent;
 
     checks.push({
-      name: "database-readiness",
-      ok: databaseReadiness.ok,
-      detail: databaseReadiness.ok
-        ? "database connection succeeded and required tables are present"
-        : (databaseReadiness.error ?? "database readiness failed"),
+      name: "entra-identity",
+      ok: identityOk,
+      detail: identityOk
+        ? "Easy Auth identity headers are present"
+        : "Easy Auth identity headers are missing",
     });
   }
 
-  if (deep) {
+  /*
+   * Deep SharePoint diagnostic.
+   */
+  if (deepRequested) {
     if (!isSharePointConfigured()) {
-      sharePointReadiness = {
+      readiness = {
         skipped: true,
         reason: "SharePoint not configured",
       };
     } else {
-      // Probe one workbook only, not all 21.
+      // Probe only KPI-01, not all 21 workbooks.
       const diagnostic = await diagnoseKpiSource("kpi-01");
 
-      sharePointReadiness = {
+      readiness = {
         overallOk: diagnostic.overallOk,
         parseOk: diagnostic.parse.ok,
         stages: diagnostic.stages.map((stage) => ({
@@ -296,8 +290,8 @@ export async function GET(request: Request) {
       timestamp: new Date().toISOString(),
       checks,
       env,
-      ...(databaseReadiness ? { database: databaseReadiness } : {}),
-      ...(sharePointReadiness ? { readiness: sharePointReadiness } : {}),
+      ...(identity ? { identity } : {}),
+      ...(readiness ? { readiness } : {}),
     },
     {
       status: ok ? 200 : 503,
