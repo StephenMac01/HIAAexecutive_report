@@ -122,7 +122,7 @@ jobs:
             rm -rf deploy/public
             cp -a public deploy/public
           fi
-
+              
           echo "Healing standalone runtime packages"
 
           for mod in \
@@ -133,28 +133,64 @@ jobs:
             scheduler \
             client-only
           do
-            package_json="$(
-              node -e "
-                try {
-                  process.stdout.write(require.resolve('${mod}/package.json'))
-                } catch (error) {
-                  process.exit(1)
-                }
-              "
+            package_entry="$(
+              MOD="${mod}" node - <<'NODE'
+          const fs = require("fs")
+          const path = require("path")
+
+          const mod = process.env.MOD
+
+          try {
+            let resolved
+
+            try {
+              resolved = require.resolve(`${mod}/package.json`)
+            } catch {
+              resolved = require.resolve(mod)
+            }
+
+            let current = fs.statSync(resolved).isDirectory()
+              ? resolved
+              : path.dirname(resolved)
+
+            while (true) {
+              const packageJson = path.join(current, "package.json")
+
+              if (fs.existsSync(packageJson)) {
+                process.stdout.write(packageJson)
+                process.exit(0)
+              }
+
+              const parent = path.dirname(current)
+
+              if (parent === current) {
+                process.exit(1)
+              }
+
+              current = parent
+            }
+          } catch {
+            process.exit(1)
+          }
+          NODE
             )"
 
-            if [ -z "${package_json}" ] || [ ! -f "${package_json}" ]; then
+            if [ -z "${package_entry}" ] || [ ! -f "${package_entry}" ]; then
               echo "ERROR: Unable to resolve runtime dependency '${mod}'."
               exit 1
             fi
 
-            package_dir="$(dirname "${package_json}")"
+            package_dir="$(dirname "${package_entry}")"
             target_dir="deploy/node_modules/${mod}"
 
             echo "Copying ${mod} from ${package_dir}"
+
             rm -rf "${target_dir}"
             mkdir -p "$(dirname "${target_dir}")"
             cp -aL "${package_dir}" "${target_dir}"
+
+            test -f "${target_dir}/package.json"
+            echo "  healed: ${mod}"
           done
 
           echo "Verifying healed runtime files"
