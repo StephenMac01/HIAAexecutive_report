@@ -141,7 +141,8 @@ jobs:
             postgres-bytea \
             postgres-date \
             postgres-interval \
-            split2
+            split2 \
+            xtend
           do
             echo "Locating runtime dependency: ${mod}"
 
