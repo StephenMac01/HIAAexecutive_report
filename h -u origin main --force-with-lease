@@ -1,0 +1,20 @@
+* [33m07161a3[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m)[m final commit
+* [33m27abd01[m[33m ([m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m Id August
+* [33m8c77980[m Add or update the Azure App Service build and deployment workflow config
+* [33mc3b0d91[m Add Easy Auth diagnostics to health endpoint
+* [33m715acfa[m Use authenticated Entra identity for dashboard users
+* [33m924c15b[m Add database diagnostics to health endpoint
+* [33mae4bdc7[m Include pg-int8 PostgreSQL runtime dependency
+* [33m4664c6b[m Include pg-int8 PostgreSQL runtime dependency
+* [33ma1c5e97[m Fix runtime package loop syntax
+* [33medd6bb2[m Fix PostgreSQL runtime deployment package
+* [33m8f47100[m Include pg-types in Azure runtime package
+* [33m0c090f9[m Include pg-types in Azure runtime package
+* [33m9e14b01[m Fix pnpm runtime package discovery
+* [33ma4fc3d1[m Fix pnpm runtime package discovery
+* [33mb07b73d[m Fix Next runtime package resolution
+* [33mf3c2eb1[m Fix Azure deployment workflow syntax and runtime packaging
+* [33meb671e3[m Update gitignore and project configuration
+* [33mad6b1a7[m Rerun Azure deployment
+* [33m0d9053e[m Deploy Azure app using run from package
+* [33ma1ea531[m Add standalone Next.js runtime dependencies

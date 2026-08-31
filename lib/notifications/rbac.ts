@@ -1,45 +1,56 @@
-import "server-only"
+import "server-only";
 
-import { getCurrentUser } from "./identity"
-import { hasRole } from "./types"
-import type { CurrentUser, Role } from "./types"
+import { getCurrentUser } from "./identity";
+import type { CurrentUser, Role } from "./types";
 
-/**
- * Role-based access control.
- *
- * Roles are hierarchical: admin ⊇ manager ⊇ viewer. Access is sourced from
- * Entra App Roles in production (mapped in lib/auth/roles.ts from the verified
- * token's `roles` claim) and from the dev identity locally. Per the Phase 3
- * decision, every authenticated user can
- * VIEW all KPIs; roles gate privileged capabilities (running evaluations,
- * assignment, audit review) rather than which KPIs are visible.
- */
-
-/** Human-readable capability summary per role (shared by UI + docs). */
-export const ROLE_CAPABILITIES: Record<Role, string> = {
-  viewer: "View dashboards and manage your own alert subscriptions.",
-  manager: "Everything a viewer can do, plus run evaluations and acknowledge alerts.",
-  admin: "Full access, including assigning subscriptions and reviewing the audit log.",
-}
-
-/** Thrown when the current user lacks the required role. */
 export class AuthorizationError extends Error {
-  readonly status = 403
-  constructor(public readonly required: Role, public readonly actual: Role) {
-    super(`Requires ${required} role (you have ${actual}).`)
-    this.name = "AuthorizationError"
+  constructor(
+    public readonly requiredRole: Role,
+    public readonly actualRole?: Role,
+  ) {
+    super("You are not authorized to perform this action.");
+    this.name = "AuthorizationError";
   }
 }
 
 /**
- * Resolve the current user and assert they meet `required`. Throws
- * AuthorizationError otherwise. Use at the top of privileged server actions and
- * route handlers.
+ * Internal privilege order.
+ */
+const ROLE_RANK: Record<Role, number> = {
+  viewer: 1,
+  manager: 2,
+  admin: 3,
+};
+
+export function hasRole(current: Role, required: Role): boolean {
+  return ROLE_RANK[current] >= ROLE_RANK[required];
+}
+
+/**
+ * Require a signed-in user with at least the requested role.
+ *
+ * No session:
+ *   -> AuthorizationError
+ *
+ * Viewer requesting Manager:
+ *   -> AuthorizationError
+ *
+ * Manager requesting Viewer:
+ *   -> allowed
+ *
+ * Administrator:
+ *   -> highest privilege
  */
 export async function requireRole(required: Role): Promise<CurrentUser> {
-  const user = await getCurrentUser()
-  if (!hasRole(user.role, required)) {
-    throw new AuthorizationError(required, user.role)
+  const user = await getCurrentUser();
+
+  if (!user) {
+    throw new AuthorizationError(required);
   }
-  return user
+
+  if (!hasRole(user.role, required)) {
+    throw new AuthorizationError(required, user.role);
+  }
+
+  return user;
 }

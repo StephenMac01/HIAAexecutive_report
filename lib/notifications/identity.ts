@@ -3,165 +3,79 @@ import "server-only";
 import { eq } from "drizzle-orm";
 
 import { db, isDatabaseConfigured } from "@/lib/db";
-
 import { appUser } from "@/lib/db/schema";
-
 import { readSession } from "@/lib/auth/session";
 
-import { isMsalEnabled } from "@/lib/auth/msal-config";
-
-import type { CurrentUser, Role } from "./types";
+import type { CurrentUser } from "./types";
 
 /**
- * Pluggable identity resolution.
+ * Production identity resolution.
  *
- * MSAL mode:
- * - Browser authenticates with Microsoft Entra ID
- * - /api/auth/session verifies the Entra access token
- * - Server creates the signed hiaa_session cookie
- * - readSession() reads and verifies that cookie here
+ * Microsoft Entra ID is the only identity provider.
  *
- * Dev mode:
- * - Uses a configurable development identity
+ * Flow:
  *
- * The rest of the application always works with CurrentUser.
+ * Browser signs in with Microsoft Entra
+ *   -> /api/auth/session verifies the Entra access token
+ *   -> server creates signed hiaa_session cookie
+ *   -> readSession() verifies that cookie
+ *   -> this module returns the authenticated Entra identity
+ *
+ * There is NO guest identity and NO development identity fallback.
  */
-
-const DEV_DEFAULTS = {
-  id: "dev-user-001",
-  email: "dev-user@example.local",
-  displayName: "Development User",
-  role: "admin" as Role,
-};
 
 /**
- * Normalize a role string to one of the supported internal roles.
+ * Resolve the current authenticated identity.
+ *
+ * Returns null when:
+ * - there is no hiaa_session cookie
+ * - the session is expired
+ * - the session signature is invalid
+ * - the session has no valid role
  */
-function normalizeRole(value: string | undefined, fallback: Role): Role {
-  if (value && ["viewer", "manager", "admin"].includes(value)) {
-    return value as Role;
+async function resolveIdentity(): Promise<CurrentUser | null> {
+  const session = await readSession();
+
+  if (!session) {
+    return null;
   }
 
-  return fallback;
-}
-
-/**
- * Development identity.
- *
- * Used only when NEXT_PUBLIC_AUTH_MODE !== "msal".
- */
-function devIdentity(): CurrentUser {
-  const role = normalizeRole(
-    process.env.NOTIFY_DEV_USER_ROLE || process.env.DEV_IDENTITY_ROLE,
-    DEV_DEFAULTS.role,
-  );
-
   return {
-    id:
-      process.env.NOTIFY_DEV_USER_ID ||
-      process.env.DEV_IDENTITY_ID ||
-      DEV_DEFAULTS.id,
-
-    email:
-      process.env.NOTIFY_DEV_USER_EMAIL ||
-      process.env.DEV_IDENTITY_EMAIL ||
-      DEV_DEFAULTS.email,
-
-    displayName:
-      process.env.NOTIFY_DEV_USER_NAME ||
-      process.env.DEV_IDENTITY_NAME ||
-      DEV_DEFAULTS.displayName,
-
-    role,
-
-    authSource: "dev",
-
-    appRoles: [],
+    id: session.id,
+    email: session.email,
+    displayName: session.displayName,
+    role: session.role,
+    authSource: "entra",
+    appRoles: session.appRoles,
   };
 }
 
 /**
- * Signed-out identity.
+ * Resolve the current authenticated user and synchronize app_user.
  *
- * This is used in MSAL mode when no valid hiaa_session cookie exists.
+ * Microsoft Entra ID is authoritative for:
+ * - identity
+ * - display name
+ * - email
+ * - application role
  *
- * Important:
- * The "viewer" role here must NOT be treated as authenticated access.
- * API guards must check authSource === "anonymous" before checking roles.
+ * PostgreSQL stores the synchronized application profile.
+ *
+ * Database availability does not determine authentication.
+ * If PostgreSQL is unavailable, the authenticated Entra identity
+ * is still returned.
  */
-function anonymousIdentity(): CurrentUser {
-  return {
-    id: "anonymous",
-    email: "",
-    displayName: "Guest",
-    role: "viewer",
-    authSource: "anonymous",
-    appRoles: [],
-  };
-}
-
-/**
- * Resolve the raw identity for the current request.
- *
- * MSAL enabled:
- *   valid session -> Entra identity
- *   no session    -> anonymous identity
- *
- * MSAL disabled:
- *   development identity
- */
-async function resolveIdentity(): Promise<CurrentUser> {
-  if (isMsalEnabled) {
-    const session = await readSession();
-
-    if (!session) {
-      return anonymousIdentity();
-    }
-
-    return {
-      id: session.id,
-      email: session.email,
-      displayName: session.displayName,
-      role: session.role,
-      authSource: "entra",
-      appRoles: session.appRoles,
-    };
-  }
-
-  return devIdentity();
-}
-
-/**
- * Resolve the current user and synchronize the app_user record.
- *
- * Role rules:
- *
- * Entra:
- * - Entra App Roles are authoritative
- * - Database role is synchronized from the authenticated session
- *
- * Development:
- * - Database role is preserved when a user row already exists
- * - Allows role testing/admin changes without being overwritten
- *
- * Database unavailable:
- * - Returns the in-memory identity
- * - Authentication can still resolve
- * - DB-backed features such as notifications may not function
- */
-export async function getCurrentUser(): Promise<CurrentUser> {
+export async function getCurrentUser(): Promise<CurrentUser | null> {
   const identity = await resolveIdentity();
 
-  /**
-   * Never persist an anonymous visitor.
-   */
-  if (identity.authSource === "anonymous") {
-    return identity;
+  if (!identity) {
+    return null;
   }
 
   /**
-   * Authentication must not fail merely because the database
-   * is not configured.
+   * Authentication has already succeeded.
+   *
+   * If PostgreSQL is unavailable, return the verified Entra identity.
    */
   if (!isDatabaseConfigured()) {
     return identity;
@@ -175,7 +89,7 @@ export async function getCurrentUser(): Promise<CurrentUser> {
       .limit(1);
 
     /**
-     * First login / first appearance of this identity.
+     * First authenticated login.
      */
     if (existing.length === 0) {
       await db.insert(appUser).values({
@@ -189,61 +103,26 @@ export async function getCurrentUser(): Promise<CurrentUser> {
     }
 
     /**
-     * Entra-authenticated user.
+     * Entra is the source of truth.
      *
-     * Entra is the source of truth for the user's profile
-     * and authorization role.
-     */
-    if (identity.authSource === "entra") {
-      await db
-        .update(appUser)
-        .set({
-          email: identity.email,
-          displayName: identity.displayName,
-          role: identity.role,
-          updatedAt: new Date(),
-        })
-        .where(eq(appUser.id, identity.id));
-
-      return identity;
-    }
-
-    /**
-     * Development identity.
-     *
-     * Update profile values, but retain the role already stored
-     * in the database.
+     * Keep the database profile synchronized with the
+     * current authenticated Entra identity and App Role.
      */
     await db
       .update(appUser)
       .set({
         email: identity.email,
         displayName: identity.displayName,
+        role: identity.role,
         updatedAt: new Date(),
       })
       .where(eq(appUser.id, identity.id));
 
-    return {
-      ...identity,
-
-      role: (existing[0].role as Role) ?? identity.role,
-    };
+    return identity;
   } catch (error) {
-    /**
-     * Authentication should still resolve even if PostgreSQL
-     * is unavailable.
-     *
-     * DB-backed notification functionality may fail separately,
-     * but a database outage should not destroy the user's
-     * authenticated identity.
-     */
     const cause =
       error instanceof Error && "cause" in error
-        ? (
-            error as {
-              cause?: unknown;
-            }
-          ).cause
+        ? (error as { cause?: unknown }).cause
         : undefined;
 
     console.error(
@@ -253,6 +132,10 @@ export async function getCurrentUser(): Promise<CurrentUser> {
       cause instanceof Error ? cause.message : cause,
     );
 
+    /**
+     * Authentication remains valid even if the application
+     * database is temporarily unavailable.
+     */
     return identity;
   }
 }

@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 
-import { readSession } from "@/lib/auth/session";
 import { getCurrentUser } from "@/lib/notifications/identity";
 import { getInbox } from "@/lib/notifications/inbox";
 import { getSubscriptionsForUser } from "@/lib/notifications/subscriptions";
@@ -17,7 +16,7 @@ export const metadata: Metadata = {
 };
 
 /**
- * Notifications contain live user-specific data.
+ * Notifications contain live, user-specific information.
  * Never statically cache this page.
  */
 export const dynamic = "force-dynamic";
@@ -25,51 +24,49 @@ export const dynamic = "force-dynamic";
 /**
  * CNS HIAA Notifications
  *
- * Security flow:
+ * Production security model:
  *
- * Valid hiaa_session
- *      ↓
- * authenticated user
- *      ↓
- * notifications
- *
- * Missing/invalid session
+ * No valid session
  *      ↓
  * /login?next=/notifications
+ *
+ * Valid Entra session
+ *      ↓
+ * Administrator / Manager / Viewer
+ *      ↓
+ * Notifications
+ *
+ * There is NO Guest or anonymous fallback.
  */
 export default async function NotificationsPage() {
   /**
-   * Require a valid authenticated application session FIRST.
+   * Resolve the authenticated Microsoft Entra identity.
    *
-   * readSession() now returns null when:
-   * - the cookie is missing
-   * - the JWT is invalid/expired
-   * - the role is missing
-   * - the role is invalid
+   * getCurrentUser() returns null when:
    *
-   * Do not fall back to Guest / Viewer.
-   */
-  const session = await readSession();
-
-  if (!session) {
-    redirect("/login?next=%2Fnotifications");
-  }
-
-  /**
-   * At this point the user has:
-   *
-   * - authenticated through Microsoft Entra
-   * - passed server-side token validation
-   * - received a recognized App Role
-   * - received a valid hiaa_session
+   * - hiaa_session is missing
+   * - session is expired
+   * - session signature is invalid
+   * - session contains no recognized application role
    */
   const user = await getCurrentUser();
 
   /**
-   * Database configuration is independent of authentication.
+   * Fail closed.
    *
-   * We still allow the authenticated user to see a friendly
-   * database unavailable screen rather than throwing.
+   * Never substitute Guest or Viewer when authentication
+   * is missing or invalid.
+   */
+  if (!user) {
+    redirect("/login?next=%2Fnotifications");
+  }
+
+  /**
+   * Authentication succeeded, but notification features
+   * require PostgreSQL.
+   *
+   * The authenticated user remains valid even if the
+   * database is temporarily unavailable.
    */
   if (!isDatabaseConfigured()) {
     return (
@@ -80,10 +77,11 @@ export default async function NotificationsPage() {
   }
 
   /**
-   * Give these arrays their actual return types instead
-   * of leaving TypeScript to infer never[] / any[].
+   * Explicit result types prevent [] from being inferred
+   * incorrectly and keep the component props type-safe.
    */
   let inbox: Awaited<ReturnType<typeof getInbox>> = [];
+
   let subscriptions: Awaited<ReturnType<typeof getSubscriptionsForUser>> = [];
 
   try {
@@ -91,10 +89,10 @@ export default async function NotificationsPage() {
       getInbox(user.id),
       getSubscriptionsForUser(user.id),
     ]);
-  } catch (err) {
+  } catch (error) {
     console.warn(
-      "[notifications] Page data load failed:",
-      err instanceof Error ? err.message : err,
+      "[notifications] Unable to load notification data:",
+      error instanceof Error ? error.message : error,
     );
 
     return (
@@ -104,6 +102,10 @@ export default async function NotificationsPage() {
     );
   }
 
+  /**
+   * Separate the portfolio-wide subscription from
+   * individual KPI subscriptions.
+   */
   const portfolioSub =
     subscriptions.find((subscription) => subscription.scope === "portfolio") ??
     null;
@@ -121,8 +123,11 @@ export default async function NotificationsPage() {
           portfolioSub
             ? {
                 dashboard: portfolioSub.channelDashboard,
+
                 email: portfolioSub.channelEmail,
+
                 teams: portfolioSub.channelTeams,
+
                 minSeverity: portfolioSub.minSeverity as never,
               }
             : null

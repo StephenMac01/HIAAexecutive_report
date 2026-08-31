@@ -1,41 +1,68 @@
-import type { Metadata, Viewport } from 'next'
-import { Geist, Geist_Mono } from 'next/font/google'
-import { SiteHeader } from '@/components/portal/site-header'
-import { Providers } from '@/app/providers'
-import { getCurrentUser } from '@/lib/notifications/identity'
-import './globals.css'
+import type { Metadata } from "next";
 
-const geistSans = Geist({ subsets: ['latin'], variable: '--font-sans' })
-const geistMono = Geist_Mono({ subsets: ['latin'], variable: '--font-mono' })
+import { Geist, Geist_Mono } from "next/font/google";
+
+import "./globals.css";
+
+import { getCurrentUser } from "@/lib/notifications/identity";
+
+import { Providers } from "@/app/providers";
+import { SiteHeader } from "@/components/portal/site-header";
+
+const geistSans = Geist({
+  variable: "--font-geist-sans",
+  subsets: ["latin"],
+});
+
+const geistMono = Geist_Mono({
+  variable: "--font-geist-mono",
+  subsets: ["latin"],
+});
 
 export const metadata: Metadata = {
-  title: 'CNS HIAA | Airport KPI Dashboard',
-  description:
-    'Executive reporting portal for all CNS HIAA airport operational KPIs. Navigate 21 individual KPI dashboards from a single, unified interface.',
-}
-
-export const viewport: Viewport = {
-  colorScheme: 'light',
-  themeColor: '#1a2540',
-}
+  title: "CNS HIAA KPI Dashboard",
+  description: "CNS HIAA Airport KPI Dashboard",
+};
 
 export default async function RootLayout({
   children,
 }: Readonly<{
-  children: React.ReactNode
+  children: React.ReactNode;
 }>) {
-  const user = await getCurrentUser()
-  // Logout is a client-side MSAL action, shown only for a real signed-in Entra
-  // session (never for the dev fallback or the anonymous /login state).
-  const showLogout = user.authSource === "entra"
+  /**
+   * getCurrentUser() returns null when:
+   * - there is no hiaa_session
+   * - the session expired
+   * - the cookie signature is invalid
+   * - the session contains no authorized role
+   */
+  const user = await getCurrentUser();
+
+  /**
+   * Only show Logout for a real Microsoft Entra session.
+   *
+   * When user is null, this evaluates to false safely.
+   */
+  const showLogout = user?.authSource === "entra";
+
   return (
-    <html lang="en" className={`bg-background ${geistSans.variable} ${geistMono.variable}`}>
+    <html
+      lang="en"
+      className={`bg-background ${geistSans.variable} ${geistMono.variable}`}
+    >
       <body className="min-h-screen bg-background font-sans antialiased">
         <Providers>
-          <SiteHeader user={user} showLogout={showLogout} />
+          {/*
+           * The login page must be allowed to render when user === null.
+           *
+           * If SiteHeader accepts a nullable user, pass it through.
+           * Otherwise render the header only when a user exists.
+           */}
+          {user ? <SiteHeader user={user} showLogout={showLogout} /> : null}
+
           {children}
         </Providers>
       </body>
     </html>
-  )
+  );
 }

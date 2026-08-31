@@ -426,26 +426,14 @@ function EntraLogin() {
 }
 
 /**
- * Deliberately disabled authentication mode.
- *
- * This should only be used when
- * NEXT_PUBLIC_AUTH_MODE intentionally disables MSAL.
- */
-function DevLogin() {
-  const status = useStatusMessage();
-
-  return (
-    <LoginForm
-      devMode
-      message={status.message}
-      messageKind={status.messageKind}
-    />
-  );
-}
-
-/**
  * Login orchestrator.
  */
 export default function LoginClient() {
-  return isMsalEnabled ? <EntraLogin /> : <DevLogin />;
+  if (!isMsalEnabled) {
+    return (
+      <LoginForm error="Microsoft Entra authentication is not configured." />
+    );
+  }
+
+  return <EntraLogin />;
 }
