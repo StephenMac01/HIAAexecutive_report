@@ -463,7 +463,7 @@ jobs:
               --silent \
               --show-error \
               --connect-timeout 30 \
-              --max-time 120 \
+              --max-time 900 \
               --dump-header kudu-headers.txt \
               --output kudu-response.txt \
               --write-out "%{http_code}" \
