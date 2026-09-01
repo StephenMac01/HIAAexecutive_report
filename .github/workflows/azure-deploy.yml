@@ -697,15 +697,25 @@ jobs:
 
           echo "Server-side deployment package verified successfully."
 
-      - name: Verify application startup
-        shell: bash
-        run: |
+            - name: Verify application startup
+           shell: bash
+           run: |
           set -euo pipefail
 
-          APP_URL="https://${AZURE_WEBAPP_NAME}.azurewebsites.net"
+          : "${KUDU_HOST:?KUDU_HOST is unavailable}"
+
+          # Azure is using a region-aware hostname such as:
+          #
+          #   app-suffix.scm.canadaeast-01.azurewebsites.net
+          #
+          # The public application hostname is the same host without ".scm".
+          APP_HOST="${KUDU_HOST/.scm./.}"
+
+          APP_URL="https://${APP_HOST}"
           HEALTH_URL="${APP_URL}/api/health"
 
           echo "Waiting for the application to start..."
+          echo "Application host: ${APP_HOST}"
           echo "Testing: ${HEALTH_URL}"
 
           for attempt in $(seq 1 24); do
@@ -746,15 +756,15 @@ jobs:
 
               401|403)
                 echo "Application is running."
-                echo "The GitHub runner was blocked by authentication or Azure access restrictions."
+                echo "Authentication/access restrictions blocked the GitHub runner."
                 cat "${RESPONSE_FILE}" || true
                 rm -f "${RESPONSE_FILE}"
                 exit 0
                 ;;
 
               404)
-                echo "The /api/health route was not found."
-                echo "Testing the application root instead."
+                echo "/api/health was not found."
+                echo "Testing application root instead."
 
                 ROOT_STATUS="$(
                   curl \
