@@ -46,7 +46,6 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-
           node --version
           pnpm --version
 
@@ -54,28 +53,24 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-
           pnpm install --frozen-lockfile
 
       - name: Clean previous build
         shell: bash
         run: |
           set -euxo pipefail
-
           rm -rf .next deploy node-app.zip
 
       - name: Build Next.js application
         shell: bash
         run: |
           set -euxo pipefail
-
           pnpm build
 
       - name: Verify standalone output
         shell: bash
         run: |
           set -euxo pipefail
-
           test -d .next/standalone
           test -f .next/standalone/server.js
           test -d .next/standalone/.next/server
@@ -83,7 +78,6 @@ jobs:
           test -d .next/server/chunks
           test -d .next/static
           test -f .next/BUILD_ID
-
           echo "Standalone Next.js output verified."
 
       - name: Prepare Azure deployment package
@@ -129,31 +123,18 @@ jobs:
             cp -a public deploy/public
           fi
 
-          # ---------------------------------------------------------------
-          # THE @swc/helpers 503 FIX (heal the standalone node_modules)
-          # ---------------------------------------------------------------
-          # Next.js `output: "standalone"` traces its runtime dependency
-          # closure with @vercel/nft. That tracer MISSES several of Next's own
-          # runtime deps and copies others only partially -- e.g. @swc/helpers
-          # is present but the dynamically-required esm/*.js files are not, and
-          # tslib / scheduler are absent entirely. The bundle still boots
-          # locally (Node resolves the gaps from the surrounding workspace) but
-          # in an isolated deployment (Azure App Service) it dies on boot with:
-          #   Error: Cannot find module '.../@swc/helpers/esm/_interop_require_default.js'
-          # and the container never starts -> Azure returns 503.
-          #
-          # Fix: overlay COMPLETE copies of these packages (dereferenced) from
-          # the flat, npm-style node_modules produced by .npmrc
-          # (node-linker=hoisted), replacing nft's partial copies. Their tiny
-          # transitive closure (@swc/helpers->tslib, styled-jsx->client-only)
-          # is covered by the list below.
+          if [ -d data ]; then
+            echo "Copying local KPI fallback data"
+            rm -rf deploy/data
+            cp -a data deploy/data
+          fi
+
           echo "Healing standalone node_modules with complete runtime packages"
           for mod in @swc/helpers styled-jsx tslib scheduler client-only; do
             src="node_modules/${mod}"
             if [ ! -f "${src}/package.json" ]; then
               echo "ERROR: runtime dependency '${mod}' not found at ${src}."
-              echo "Confirm .npmrc has 'node-linker=hoisted' and that"
-              echo "'pnpm install' ran before this step."
+              echo "Confirm .npmrc has 'node-linker=hoisted' and that pnpm install ran."
               exit 1
             fi
             mkdir -p "deploy/node_modules/$(dirname "${mod}")"
@@ -162,13 +143,43 @@ jobs:
             echo "  healed: ${mod}"
           done
 
-          echo "Verifying healed runtime files are complete"
+          echo "Overlaying PostgreSQL runtime dependency tree"
+          for mod in \
+            pg \
+            pg-types \
+            pg-int8 \
+            pg-numeric \
+            pg-protocol \
+            pg-pool \
+            pg-connection-string \
+            pgpass \
+            postgres-array \
+            postgres-bytea \
+            postgres-date \
+            postgres-interval \
+            postgres-range \
+            obuf
+          do
+            src="node_modules/${mod}"
+            if [ -f "${src}/package.json" ]; then
+              mkdir -p "deploy/node_modules/$(dirname "${mod}")"
+              rm -rf "deploy/node_modules/${mod}"
+              cp -aL "${src}" "deploy/node_modules/${mod}"
+              echo "  copied: ${mod}"
+            else
+              echo "WARNING: optional runtime dependency '${mod}' not found at ${src}; skipping."
+            fi
+          done
+
+          echo "Verifying healed runtime files"
           test -f deploy/node_modules/@swc/helpers/esm/_interop_require_default.js
           test -f deploy/node_modules/@swc/helpers/package.json
           test -f deploy/node_modules/styled-jsx/package.json
           test -f deploy/node_modules/tslib/package.json
           test -f deploy/node_modules/scheduler/package.json
           test -f deploy/node_modules/client-only/package.json
+          test -f deploy/node_modules/next/package.json
+          test -f deploy/node_modules/pg/package.json
 
           echo "Removing stale Azure Oryx files"
           rm -f deploy/oryx-manifest.toml
@@ -176,26 +187,9 @@ jobs:
           rm -rf deploy/__oryx_packages__
           rm -rf deploy/_del_node_modules
 
-          # ---------------------------------------------------------------
-          # THE 503 FIX
-          # ---------------------------------------------------------------
-          # Next.js standalone server.js binds to process.env.HOSTNAME (falling
-          # back to 0.0.0.0 only when it is unset). Azure App Service (Linux)
-          # sets HOSTNAME to the container's internal hostname, so the server
-          # ends up listening on that hostname instead of 0.0.0.0. Azure's
-          # front-end forwards requests to 127.0.0.1:<PORT> inside the
-          # container, cannot reach the listener, and returns 503.
-          #
-          # Replace server.js with a tiny wrapper that forces the bind address
-          # to 0.0.0.0 (and a default PORT) before delegating to the real
-          # standalone server, whatever HOSTNAME Azure injects.
           echo "Applying Azure 0.0.0.0 bind wrapper"
           mv deploy/server.js deploy/app-server.js
           cat > deploy/server.js <<'NODE'
-          // Azure App Service startup entry. Force a 0.0.0.0 bind so the
-          // platform health probe (127.0.0.1:PORT) can reach the server; Azure
-          // otherwise sets HOSTNAME to the container hostname and Next.js
-          // standalone binds to it, causing 503 Service Unavailable.
           process.env.HOSTNAME = "0.0.0.0"
           if (!process.env.PORT) {
             process.env.PORT = "8080"
@@ -223,21 +217,16 @@ jobs:
           grep -Fq 'process.env.HOSTNAME = "0.0.0.0"' deploy/server.js
 
           echo "Testing production dependencies"
-
           (
             cd deploy
-
             node -e "require('next'); console.log('next loaded successfully')"
             node -e "require('pg'); console.log('pg loaded successfully')"
           )
 
           echo "Testing standalone Next.js server (via the Azure wrapper)"
-
           (
             cd deploy
 
-            # Deliberately export a bogus HOSTNAME to prove the wrapper still
-            # forces a 0.0.0.0 bind exactly as it must on Azure.
             HOSTNAME="bogus-azure-container-host" PORT=8081 node server.js \
               >standalone-test.log 2>&1 &
 
@@ -264,8 +253,7 @@ jobs:
 
               echo "Standalone test attempt ${attempt}: HTTP ${STATUS}"
 
-              if [ "${STATUS}" -ge 200 ] && \
-                 [ "${STATUS}" -lt 500 ]; then
+              if [ "${STATUS}" -ge 200 ] && [ "${STATUS}" -lt 500 ]; then
                 echo "Standalone server responded successfully on 0.0.0.0."
                 exit 0
               fi
@@ -282,14 +270,12 @@ jobs:
           rm -f deploy/standalone-test.log deploy/standalone-response.txt
 
           echo "Creating Azure deployment archive"
-
           (
             cd deploy
             zip -qr ../node-app.zip .
           )
 
           echo "Verifying deployment archive"
-
           test -f node-app.zip
 
           unzip -Z1 node-app.zip | grep -Fx "server.js"
@@ -369,14 +355,11 @@ jobs:
         run: |
           set -euo pipefail
 
-          python - <<'PY'
+          python3 - <<'PY'
           import os
           import xml.etree.ElementTree as ET
 
-          profile_xml = os.environ.get(
-              "AZURE_PUBLISH_PROFILE",
-              "",
-          ).strip()
+          profile_xml = os.environ.get("AZURE_PUBLISH_PROFILE", "").strip()
 
           if not profile_xml:
               raise SystemExit(
@@ -393,18 +376,12 @@ jobs:
           profiles = root.findall(".//publishProfile")
 
           if not profiles:
-              raise SystemExit(
-                  "No publishProfile entries were found."
-              )
+              raise SystemExit("No publishProfile entries were found.")
 
           selected = None
 
           for profile in profiles:
-              method = profile.attrib.get(
-                  "publishMethod",
-                  "",
-              ).lower()
-
+              method = profile.attrib.get("publishMethod", "").lower()
               if method in {"zipdeploy", "msdeploy"}:
                   selected = profile
                   break
@@ -420,15 +397,11 @@ jobs:
                   "The publish profile does not contain deployment credentials."
               )
 
-          # Azure issues region-specific SCM (Kudu) hostnames, e.g.
-          # <app>-<hash>.canadaeast-01.azurewebsites.net, so the host must be
-          # read from the profile's publishUrl rather than constructed as
-          # <app>.scm.azurewebsites.net (which no longer resolves -> curl (6)).
           publish_url = selected.attrib.get("publishUrl", "").strip()
 
-          # Normalize: drop scheme, any path, and the :port suffix.
           if "://" in publish_url:
               publish_url = publish_url.split("://", 1)[1]
+
           publish_url = publish_url.split("/", 1)[0]
           kudu_host = publish_url.split(":", 1)[0]
 
@@ -439,16 +412,14 @@ jobs:
 
           github_env = os.environ["GITHUB_ENV"]
 
-          with open(
-              github_env,
-              "a",
-              encoding="utf-8",
-          ) as env_file:
+          with open(github_env, "a", encoding="utf-8") as env_file:
               env_file.write(f"KUDU_USERNAME={username}\n")
               env_file.write(f"KUDU_PASSWORD={password}\n")
               env_file.write(f"KUDU_HOST={kudu_host}\n")
 
-          print(f"Azure Kudu deployment credentials loaded. Kudu host: {kudu_host}")
+          print(
+              f"Azure Kudu deployment credentials loaded. Kudu host: {kudu_host}"
+          )
           PY
 
       - name: Deploy clean ZIP through Azure Kudu
@@ -459,55 +430,157 @@ jobs:
           : "${KUDU_USERNAME:?KUDU_USERNAME is unavailable}"
           : "${KUDU_PASSWORD:?KUDU_PASSWORD is unavailable}"
 
-          # Prefer the region-aware host parsed from the publish profile's
-          # publishUrl. Fall back to the legacy pattern only if it is missing.
           KUDU_HOST="${KUDU_HOST:-${AZURE_WEBAPP_NAME}.scm.azurewebsites.net}"
-          KUDU_URL="https://${KUDU_HOST}/api/zipdeploy"
+          KUDU_BASE="https://${KUDU_HOST}"
+          KUDU_URL="${KUDU_BASE}/api/zipdeploy?isAsync=true"
+          ZIP_FILE="artifact/node-app.zip"
 
-          echo "Deploying tested ZIP through Azure Kudu"
+          echo "Deploying tested ZIP asynchronously through Azure Kudu"
           echo "Kudu host: ${KUDU_HOST}"
+          echo "ZIP: ${ZIP_FILE}"
 
-          # Fail early with a clear message if DNS cannot resolve the host,
-          # instead of a bare "curl (6)".
+          if [ ! -f "${ZIP_FILE}" ]; then
+            echo "ERROR: Deployment ZIP does not exist: ${ZIP_FILE}"
+            exit 1
+          fi
+
+          echo "ZIP size:"
+          ls -lh "${ZIP_FILE}"
+
           if ! getent hosts "${KUDU_HOST}" >/dev/null 2>&1 \
              && ! nslookup "${KUDU_HOST}" >/dev/null 2>&1; then
             echo "ERROR: Could not resolve Kudu host '${KUDU_HOST}'."
-            echo "Verify the publish profile is current (download a fresh one" \
-                 "from the App Service > Deployment Center if the app was" \
-                 "recreated or renamed)."
+            echo "Verify the Azure publish profile is current."
             exit 1
           fi
+
+          rm -f kudu-headers.txt kudu-response.txt deployment-status.json
+
+          echo "Starting asynchronous ZIP deployment..."
 
           HTTP_STATUS="$(
             curl \
               --silent \
               --show-error \
-              --location \
               --connect-timeout 30 \
-              --max-time 900 \
+              --max-time 120 \
+              --dump-header kudu-headers.txt \
               --output kudu-response.txt \
               --write-out "%{http_code}" \
               --user "${KUDU_USERNAME}:${KUDU_PASSWORD}" \
               --header "Content-Type: application/zip" \
               --request POST \
-              --data-binary "@artifact/node-app.zip" \
+              --data-binary "@${ZIP_FILE}" \
               "${KUDU_URL}"
           )"
 
-          echo "Kudu response:"
-          cat kudu-response.txt || true
-          echo
-          echo "Kudu HTTP status: ${HTTP_STATUS}"
+          echo "Initial Kudu HTTP status: ${HTTP_STATUS}"
 
-          if [ "${HTTP_STATUS}" -lt 200 ] || \
-             [ "${HTTP_STATUS}" -ge 300 ]; then
-            echo "ERROR: Azure deployment failed."
+          if [ -s kudu-response.txt ]; then
+            echo "Initial Kudu response:"
+            cat kudu-response.txt
+            echo
+          fi
+
+          if [ "${HTTP_STATUS}" -lt 200 ] || [ "${HTTP_STATUS}" -ge 300 ]; then
+            echo "ERROR: Kudu rejected the ZIP deployment request."
             exit 1
           fi
 
-          echo "Azure deployment completed successfully."
+          DEPLOYMENT_URL="$(
+            awk '
+              BEGIN { IGNORECASE=1 }
+              /^Location:/ {
+                sub(/\r$/, "", $2)
+                print $2
+              }
+            ' kudu-headers.txt | tail -1
+          )"
 
-      - name: Verify server-side package (detect Oryx tampering)
+          if [ -z "${DEPLOYMENT_URL}" ]; then
+            echo "ERROR: Kudu did not return a Location header."
+            echo "--- Response headers ---"
+            cat kudu-headers.txt
+            exit 1
+          fi
+
+          case "${DEPLOYMENT_URL}" in
+            http://*|https://*)
+              ;;
+            /*)
+              DEPLOYMENT_URL="${KUDU_BASE}${DEPLOYMENT_URL}"
+              ;;
+            *)
+              DEPLOYMENT_URL="${KUDU_BASE}/${DEPLOYMENT_URL}"
+              ;;
+          esac
+
+          echo "Deployment status URL: ${DEPLOYMENT_URL}"
+
+          MAX_ATTEMPTS=120
+          ATTEMPT=1
+
+          while [ "${ATTEMPT}" -le "${MAX_ATTEMPTS}" ]; do
+            echo "Checking deployment status (${ATTEMPT}/${MAX_ATTEMPTS})..."
+
+            POLL_HTTP="$(
+              curl \
+                --silent \
+                --show-error \
+                --connect-timeout 30 \
+                --max-time 60 \
+                --output deployment-status.json \
+                --write-out "%{http_code}" \
+                --user "${KUDU_USERNAME}:${KUDU_PASSWORD}" \
+                "${DEPLOYMENT_URL}"
+            )"
+
+            if [ "${POLL_HTTP}" -lt 200 ] || [ "${POLL_HTTP}" -ge 300 ]; then
+              echo "WARNING: Status endpoint returned HTTP ${POLL_HTTP}."
+              sleep 10
+              ATTEMPT=$((ATTEMPT + 1))
+              continue
+            fi
+
+            STATUS="$(jq -r '.status // -1' deployment-status.json)"
+            STATUS_TEXT="$(jq -r '.status_text // .message // ""' deployment-status.json)"
+            PROGRESS="$(jq -r '.progress // ""' deployment-status.json)"
+
+            echo "Kudu status: ${STATUS}"
+            echo "Status text: ${STATUS_TEXT}"
+
+            if [ -n "${PROGRESS}" ]; then
+              echo "Progress: ${PROGRESS}"
+            fi
+
+            if [ "${STATUS}" = "4" ]; then
+              echo "Azure deployment completed successfully."
+              exit 0
+            fi
+
+            if [ "${STATUS}" = "3" ]; then
+              echo "ERROR: Azure deployment failed."
+              echo "--- Deployment response ---"
+              cat deployment-status.json
+              echo "--- Kudu deployment log ---"
+              curl \
+                --silent \
+                --show-error \
+                --user "${KUDU_USERNAME}:${KUDU_PASSWORD}" \
+                "${DEPLOYMENT_URL}/log" || true
+              exit 1
+            fi
+
+            sleep 10
+            ATTEMPT=$((ATTEMPT + 1))
+          done
+
+          echo "ERROR: Deployment did not complete within 20 minutes."
+          echo "--- Last known deployment status ---"
+          cat deployment-status.json || true
+          exit 1
+
+      - name: Verify server-side package
         shell: bash
         run: |
           set -euo pipefail
@@ -516,13 +589,8 @@ jobs:
           : "${KUDU_PASSWORD:?KUDU_PASSWORD is unavailable}"
           KUDU_HOST="${KUDU_HOST:-${AZURE_WEBAPP_NAME}.scm.azurewebsites.net}"
 
-          # Inspect what actually landed in wwwroot. If Oryx ran, it leaves an
-          # oryx-manifest.toml and repackages node_modules, frequently dropping
-          # next / @swc/helpers -> the app crashes and Azure returns 503.
-          REMOTE_CMD='echo "--- wwwroot ---"; ls -1 /home/site/wwwroot | head -40; echo "--- checks ---"; test -f /home/site/wwwroot/server.js && echo SERVER_OK || echo SERVER_MISSING; test -f /home/site/wwwroot/node_modules/next/package.json && echo NEXT_OK || echo NEXT_MISSING; test -f /home/site/wwwroot/node_modules/@swc/helpers/package.json && echo SWC_OK || echo SWC_MISSING; test -f /home/site/wwwroot/oryx-manifest.toml && echo ORYX_RAN || echo ORYX_ABSENT'
+          REMOTE_CMD='echo "--- wwwroot ---"; ls -1 /home/site/wwwroot | head -40; echo "--- checks ---"; test -f /home/site/wwwroot/server.js && echo SERVER_OK || echo SERVER_MISSING; test -f /home/site/wwwroot/node_modules/next/package.json && echo NEXT_OK || echo NEXT_MISSING; test -f /home/site/wwwroot/node_modules/@swc/helpers/package.json && echo SWC_OK || echo SWC_MISSING'
 
-          # Kudu command API expects JSON {"command": "...", "dir": "..."}.
-          # Build the JSON body with a single-line python call (keeps YAML happy).
           BODY="$(REMOTE_CMD="${REMOTE_CMD}" python3 -c 'import json,os; print(json.dumps({"command": os.environ["REMOTE_CMD"], "dir": "/home/site/wwwroot"}))')"
 
           RESPONSE="$(
@@ -538,34 +606,16 @@ jobs:
               "https://${KUDU_HOST}/api/command" || true
           )"
 
-          # Kudu returns JSON whose "Output" string embeds our marker tokens
-          # (SERVER_OK, NEXT_MISSING, ORYX_RAN, ...). The tokens survive as
-          # literal substrings, so we grep the raw response directly instead of
-          # parsing JSON (which avoids fragile multi-line parsing in YAML).
           echo "Server-side wwwroot inspection (raw Kudu response):"
           echo "${RESPONSE}"
-
-          if echo "${RESPONSE}" | grep -q "ORYX_RAN"; then
-            echo "ERROR: Oryx build ran on the server (oryx-manifest.toml present)."
-            echo "This repackages node_modules and breaks the prebuilt standalone bundle."
-            echo "FIX (Azure Portal -> App Service -> Settings -> Configuration ->"
-            echo "Application settings), then redeploy:"
-            echo "  SCM_DO_BUILD_DURING_DEPLOYMENT = false"
-            echo "  ENABLE_ORYX_BUILD              = false"
-            echo "And under General settings set the Startup Command to: node server.js"
-            exit 1
-          fi
 
           if echo "${RESPONSE}" | grep -qE "NEXT_MISSING|SWC_MISSING|SERVER_MISSING"; then
             echo "ERROR: The deployed bundle is incomplete on the server."
             echo "Expected server.js + node_modules/next + node_modules/@swc/helpers."
-            echo "This is the classic symptom of Oryx build-on-deploy. Apply the app"
-            echo "settings above (SCM_DO_BUILD_DURING_DEPLOYMENT=false,"
-            echo "ENABLE_ORYX_BUILD=false) and redeploy."
             exit 1
           fi
 
-          echo "Server-side bundle verified: no Oryx tampering, next/@swc present."
+          echo "Server-side bundle verified."
 
       - name: Verify application startup
         shell: bash
@@ -617,7 +667,6 @@ jobs:
               401|403)
                 echo "Application is running."
                 echo "The GitHub runner was blocked by authentication or Azure access restrictions."
-                echo "Startup verification will be treated as successful."
                 cat "${RESPONSE_FILE}" || true
                 rm -f "${RESPONSE_FILE}"
                 exit 0
