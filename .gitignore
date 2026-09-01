@@ -1,14 +1,17 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
 # dependencies
-/node_modules
+/node_modules/
 
 # next.js
 /.next/
 /out/
 
-# production
-/build
+# production / deployment artifacts
+/build/
+/azure-package/
+/deploy/
+*.zip
 
 # debug
 npm-debug.log*
@@ -16,13 +19,17 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (never commit real secrets; the placeholder example is allowed)
+# environment files
+# Never commit real secrets; the placeholder example is allowed.
 .env*
 !.env.example
 
-# vercel
-.vercel
+# Vercel
+.vercel/
 
-# typescript
+# VS Code local settings
+.vscode/
+
+# TypeScript
 *.tsbuildinfo
 next-env.d.ts
