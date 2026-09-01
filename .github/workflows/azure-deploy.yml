@@ -67,9 +67,9 @@ jobs:
           set -euxo pipefail
           rm -rf .next deploy node-app.zip
 
-            - name: Verify Entra build configuration
-            shell: bash
-            run: |
+      - name: Verify Entra build configuration
+        shell: bash
+        run: |
           set -euo pipefail
 
           FAILED=0
