@@ -11,6 +11,12 @@ env:
   NODE_VERSION: "22.x"
   PNPM_VERSION: "11.16.0"
   NEXT_TELEMETRY_DISABLED: "1"
+  NEXT_PUBLIC_AUTH_MODE: ${{ vars.NEXT_PUBLIC_AUTH_MODE }}
+  NEXT_PUBLIC_AZURE_CLIENT_ID: ${{ vars.NEXT_PUBLIC_AZURE_CLIENT_ID }}
+  NEXT_PUBLIC_AZURE_TENANT_ID: ${{ vars.NEXT_PUBLIC_AZURE_TENANT_ID }}
+  NEXT_PUBLIC_AZURE_API_SCOPE: ${{ vars.NEXT_PUBLIC_AZURE_API_SCOPE }}
+  NEXT_PUBLIC_AZURE_REDIRECT_URI: ${{ vars.NEXT_PUBLIC_AZURE_REDIRECT_URI }}
+  NEXT_PUBLIC_AZURE_POST_LOGOUT_URI: ${{ vars.NEXT_PUBLIC_AZURE_POST_LOGOUT_URI }}
 
 permissions:
   contents: read
@@ -60,6 +66,20 @@ jobs:
         run: |
           set -euxo pipefail
           rm -rf .next deploy node-app.zip
+
+      - name: Verify Entra build configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test "${NEXT_PUBLIC_AUTH_MODE}" = "msal"
+          test -n "${NEXT_PUBLIC_AZURE_CLIENT_ID}"
+          test -n "${NEXT_PUBLIC_AZURE_TENANT_ID}"
+          test -n "${NEXT_PUBLIC_AZURE_API_SCOPE}"
+          test -n "${NEXT_PUBLIC_AZURE_REDIRECT_URI}"
+          test -n "${NEXT_PUBLIC_AZURE_POST_LOGOUT_URI}"
+
+          echo "Entra browser configuration is present for the production build."
 
       - name: Build Next.js application
         shell: bash
@@ -396,6 +416,9 @@ jobs:
               raise SystemExit(
                   "The publish profile does not contain deployment credentials."
               )
+          # Prevent GitHub Actions from displaying these credentials in logs.
+          print(f"::add-mask::{username}")
+          print(f"::add-mask::{password}")        
 
           publish_url = selected.attrib.get("publishUrl", "").strip()
 
