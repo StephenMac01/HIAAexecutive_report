@@ -3,45 +3,45 @@
 import { useState } from "react";
 import { ensureMsalInitialized } from "@/lib/auth/msal-instance";
 
-export function LogoutButton() {
-  const [busy, setBusy] = useState(false);
+export default function LogoutButton() {
+  const [loggingOut, setLoggingOut] = useState(false);
 
   async function handleLogout() {
-    if (busy) return;
+    if (loggingOut) return;
+
+    setLoggingOut(true);
 
     try {
-      setBusy(true);
-
-      const response = await fetch("/api/auth/logout", {
+      // First remove our server-side HIAA session cookie.
+      await fetch("/api/auth/logout", {
         method: "POST",
         credentials: "include",
-        cache: "no-store",
       });
 
-      if (!response.ok) {
-        throw new Error("Unable to clear application session.");
-      }
-
+      // Then terminate the Microsoft Entra/MSAL session.
       const msal = await ensureMsalInitialized();
 
-      const account = msal.getActiveAccount() ?? msal.getAllAccounts()[0];
+      const account =
+        msal.getActiveAccount() ?? msal.getAllAccounts()[0] ?? undefined;
 
       await msal.logoutRedirect({
         account,
-        postLogoutRedirectUri: `${window.location.origin}/login?loggedOut=true`,
+        postLogoutRedirectUri:
+          process.env.NEXT_PUBLIC_AZURE_POST_LOGOUT_URI ??
+          `${window.location.origin}/login`,
       });
     } catch (error) {
-      console.error("[auth] Logout failed:", error);
+      console.error("Logout failed:", error);
 
-      setBusy(false);
-
+      // Our HIAA cookie has already been removed.
+      // Return to login rather than leaving the user on the dashboard.
       window.location.assign("/login?loggedOut=true");
     }
   }
 
   return (
-    <button type="button" onClick={handleLogout} disabled={busy}>
-      {busy ? "Signing out..." : "Sign out"}
+    <button type="button" onClick={handleLogout} disabled={loggingOut}>
+      {loggingOut ? "Signing out..." : "Logout"}
     </button>
   );
 }

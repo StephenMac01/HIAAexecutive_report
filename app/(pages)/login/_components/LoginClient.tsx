@@ -9,7 +9,7 @@ import { InteractionRequiredAuthError } from "@azure/msal-browser";
 import Loading from "@/app/loading";
 import LoginForm from "./LoginForm";
 
-import { apiScope, isMsalEnabled } from "@/lib/auth/msal-config";
+import { apiScope, isMsalEnabled, loginRequest } from "@/lib/auth/msal-config";
 
 import { ensureMsalInitialized } from "@/lib/auth/msal-instance";
 
@@ -17,7 +17,7 @@ import { ensureMsalInitialized } from "@/lib/auth/msal-instance";
  * Only allow redirects to local application paths.
  *
  * Prevents:
- * ?next=https://evil.example
+ *   ?next=https://evil.example
  */
 function safeNextPath(value: string | null): string {
   if (!value) return "/";
@@ -34,8 +34,8 @@ function safeNextPath(value: string | null): string {
 }
 
 /**
- * Convert login query-string flags into
- * user-facing status messages.
+ * Convert login query-string flags into user-facing
+ * status messages.
  */
 function useStatusMessage(): {
   message?: string;
@@ -63,37 +63,8 @@ function useStatusMessage(): {
 /**
  * Microsoft Entra/MSAL login.
  *
- * Interactive authentication is initiated ONLY
- * when the user clicks the Sign In button.
- *
- * Flow:
- *
- * /login
- *    ↓
- * Sign in button
- *    ↓
- * loginRedirect()
- *    ↓
- * Microsoft Entra
- *    ↓
- * /login
- *    ↓
- * handleRedirectPromise()
- *    ↓
- * acquire API token
- *    ↓
- * POST /api/auth/session
- *    ↓
- * Server validates:
- *   signature
- *   issuer
- *   audience
- *   expiry
- *   app role
- *    ↓
- * hiaa_session
- *    ↓
- * dashboard
+ * Interactive authentication is initiated ONLY when
+ * the user clicks Sign in with Microsoft.
  */
 function EntraLogin() {
   const router = useRouter();
@@ -109,9 +80,8 @@ function EntraLogin() {
   const [error, setError] = useState("");
 
   /**
-   * Send the verified Microsoft access token
-   * to our server and create the httpOnly
-   * hiaa_session cookie.
+   * Exchange the Entra access token for the
+   * application's own httpOnly session cookie.
    */
   const createServerSession = useCallback(async (accessToken: string) => {
     const response = await fetch("/api/auth/session", {
@@ -122,6 +92,7 @@ function EntraLogin() {
       },
 
       credentials: "include",
+
       cache: "no-store",
     });
 
@@ -136,7 +107,7 @@ function EntraLogin() {
     if (response.status === 403) {
       throw new Error(
         body.error ??
-          "Your Microsoft account is authenticated, but no authorized HIAA application role was found.",
+          "Your Microsoft account is authenticated, but you are not authorized to use this application.",
       );
     }
 
@@ -152,19 +123,19 @@ function EntraLogin() {
   }, []);
 
   /**
-   * Complete a Microsoft redirect if one exists.
+   * Process an MSAL redirect response if one exists.
    *
-   * This effect NEVER launches an interactive
-   * authentication operation.
+   * IMPORTANT:
+   *
+   * This effect NEVER starts interactive login.
+   *
+   * Interactive login only happens from
+   * handleSignIn().
    */
   useEffect(() => {
     let cancelled = false;
 
     async function initialize() {
-      /*
-       * Avoid running meaningful work during the
-       * first development-only Strict Mode effect.
-       */
       await Promise.resolve();
 
       if (cancelled) {
@@ -176,13 +147,13 @@ function EntraLogin() {
           throw new Error("NEXT_PUBLIC_AZURE_API_SCOPE is not configured.");
         }
 
-        /*
-         * MSAL should run in a normal top-level browser
-         * window, not an embedded iframe/webview.
+        /**
+         * Entra interactive authentication must run
+         * in a normal top-level browser window.
          */
         if (window.self !== window.top) {
           throw new Error(
-            "Microsoft sign-in cannot run inside an embedded browser. Open http://localhost:3000/login in Microsoft Edge or Google Chrome.",
+            "Microsoft sign-in cannot run inside an embedded browser. Open the application directly in Microsoft Edge or Google Chrome.",
           );
         }
 
@@ -192,10 +163,9 @@ function EntraLogin() {
           return;
         }
 
-        /*
-         * Complete an existing Microsoft redirect.
-         *
-         * This MUST happen before using the MSAL account.
+        /**
+         * Complete a redirect that was started by
+         * loginRedirect().
          */
         const redirectResult = await msal.handleRedirectPromise();
 
@@ -208,11 +178,11 @@ function EntraLogin() {
           msal.getActiveAccount() ??
           msal.getAllAccounts()[0];
 
-        /*
-         * First visit:
+        /**
+         * No account means this is simply the normal
+         * first visit to /login.
          *
-         * No Microsoft account exists yet.
-         * Show the Sign in with Microsoft button.
+         * Show the button and wait for the user.
          */
         if (!account) {
           setInitializing(false);
@@ -226,31 +196,28 @@ function EntraLogin() {
         setBusy(true);
         setError("");
 
-        /*
-         * If loginRedirect already supplied an API
-         * access token, use it.
+        /**
+         * loginRedirect() may already have returned
+         * the requested API access token.
          */
         let accessToken = redirectResult?.accessToken ?? "";
 
-        /*
-         * Otherwise try silent token acquisition.
+        /**
+         * Otherwise acquire it silently.
          *
-         * IMPORTANT:
-         * We do NOT launch acquireTokenRedirect()
-         * from this effect.
+         * Never call acquireTokenRedirect() from
+         * this effect.
          */
         if (!accessToken) {
           try {
             const tokenResult = await msal.acquireTokenSilent({
               scopes: [apiScope],
+
               account,
 
-              /*
-               * Useful while role assignments are
-               * currently being changed in Entra.
-               *
-               * It prevents an old access token with
-               * roles: [] from being reused.
+              /**
+               * Useful while Entra App Role
+               * assignments are being changed.
                */
               forceRefresh: true,
             });
@@ -258,13 +225,6 @@ function EntraLogin() {
             accessToken = tokenResult.accessToken;
           } catch (tokenError) {
             if (tokenError instanceof InteractionRequiredAuthError) {
-              /*
-               * Do not initiate another redirect from
-               * inside initialization.
-               *
-               * Let the user explicitly initiate the
-               * interactive operation.
-               */
               setBusy(false);
               setInitializing(false);
 
@@ -289,9 +249,8 @@ function EntraLogin() {
           );
         }
 
-        /*
-         * Exchange the Microsoft token for the
-         * application's own secure session.
+        /**
+         * Create our own signed application session.
          */
         await createServerSession(accessToken);
 
@@ -299,8 +258,8 @@ function EntraLogin() {
           return;
         }
 
-        /*
-         * Successful authentication AND authorization.
+        /**
+         * Authentication and authorization completed.
          */
         router.replace(next);
         router.refresh();
@@ -309,12 +268,6 @@ function EntraLogin() {
           return;
         }
 
-        /*
-         * Authentication/authorization errors are
-         * expected user-flow conditions, so use warn
-         * instead of console.error to avoid the large
-         * Next.js development error overlay.
-         */
         console.warn("[auth] Microsoft login initialization:", err);
 
         setBusy(false);
@@ -333,38 +286,36 @@ function EntraLogin() {
     return () => {
       cancelled = true;
     };
-  }, [apiScope, createServerSession, next, router]);
+  }, [createServerSession, next, router]);
 
   /**
-   * The ONLY place we intentionally start
-   * Microsoft interactive authentication.
+   * The ONLY location that deliberately starts
+   * interactive Microsoft authentication.
    */
   const handleSignIn = useCallback(async () => {
-    try {
-      setBusy(true);
-      setError("");
+    if (busy) {
+      return;
+    }
 
+    setBusy(true);
+    setError("");
+
+    try {
       if (!apiScope) {
-        throw new Error("NEXT_PUBLIC_AZURE_API_SCOPE is not configured.");
+        throw new Error("Microsoft Entra authentication is not configured.");
       }
 
-      /*
-       * Prevent MSAL authentication from being started
-       * inside VS Code Simple Browser or another iframe.
-       */
       if (window.self !== window.top) {
         throw new Error(
-          "Open this application in Microsoft Edge or Google Chrome before signing in.",
+          "Microsoft sign-in cannot run inside an embedded browser. Open the application directly in Microsoft Edge or Google Chrome.",
         );
       }
 
       const msal = await ensureMsalInitialized();
 
-      /*
-       * Remove any stale active account selection.
-       *
-       * We are NOT removing the Microsoft account
-       * from MSAL here.
+      /**
+       * Preserve an existing selected account if
+       * MSAL already knows about one.
        */
       const currentAccount =
         msal.getActiveAccount() ?? msal.getAllAccounts()[0];
@@ -373,19 +324,23 @@ function EntraLogin() {
         msal.setActiveAccount(currentAccount);
       }
 
-      /*
-       * Request our API scope during the primary
-       * interactive login.
+      /**
+       * Start Microsoft interactive login in the
+       * TOP-LEVEL browser window.
        *
-       * This reduces the likelihood of needing
-       * another interactive token operation later.
+       * No popup flow is used.
        */
       await msal.loginRedirect({
-        scopes: [apiScope],
+        ...loginRequest,
 
-        /*
-         * Explicitly allow the user to select the
-         * Microsoft account during testing.
+        scopes: [apiScope, "openid", "profile", "email"].filter(Boolean),
+
+        /**
+         * Explicit account selection is useful
+         * while testing role assignments.
+         *
+         * You can remove this later if you want
+         * seamless account reuse.
          */
         prompt: "select_account",
 
@@ -404,12 +359,8 @@ function EntraLogin() {
           : "Unable to start Microsoft sign-in.",
       );
     }
-  }, []);
+  }, [busy]);
 
-  /*
-   * Use the branded full-page loading view only
-   * during legitimate processing.
-   */
   if (initializing || busy) {
     return <Loading />;
   }
